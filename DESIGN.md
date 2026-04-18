@@ -174,6 +174,26 @@ AppMessage dictionary (watch ↔ JS), kept small to fit Pebble's outbox size:
 | `UPDATED_AT`      | uint32  | Unix epoch seconds                     |
 | `ERROR`           | string  | Populated on failure                   |
 
+All distances stay in km end-to-end (Kia → proxy → companion → watch). Unit
+conversion is a display-only concern on the watch (see "Display units"
+below), so the wire format and proxy cache remain source-of-truth and a
+second client (Home Assistant, dashboard) can pick its own presentation.
+
+## Display units
+
+UK deployment: the watch renders range and odometer in miles by default,
+Celsius for cabin temp, kW for charge rate. The owner drives in the UK and
+Kia's head unit shows miles, so the watch matches.
+
+Implementation: `pebble/src/c/units.h` defines `PBK_USE_MILES` (default 1)
+and a `format_distance_km()` helper. All km-to-display conversion flows
+through that helper; flipping the macro to 0 switches every distance
+readout back to km without touching call sites. Both Pebble platforms are
+fixed-point, so the helper uses integer math (km × 1000 / 1609, rounded)
+rather than floats. When the configuration UI lands in phase 5 this macro
+can become a Clay setting persisted to `localStorage`; for now it's a
+compile-time constant because the deployment is single-user.
+
 ## Phased plan
 
 Each phase ends with something runnable and committable.

@@ -94,6 +94,14 @@ Pebble Time 2 once it ships.
 A `DEMO` badge is drawn top-right on the main screen so it's never
 ambiguous that the values are fake.
 
+## Display units
+
+UK defaults: range and odometer render in miles, cabin temp in Celsius,
+charge rate in kW. Data is transported and cached in km end-to-end; the
+watch converts on the fly. Flip `PBK_USE_MILES` in `pebble/src/c/units.h`
+to `0` and rebuild if you want kilometres. A runtime toggle via Clay
+configuration is deferred until phase 5.
+
 ## What's next
 
 The phased plan lives in `DESIGN.md`. Short version:

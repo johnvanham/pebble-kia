@@ -71,6 +71,16 @@ SDK docs rather than guessing API shapes. Known gotchas:
   that style.
 - Do **not** open pull requests unless explicitly asked.
 
+## Display units
+
+The owner is in the UK, so range and odometer render in **miles** by
+default; cabin temp in °C, charge rate in kW. The canonical data stays in
+km (matching what the Kia API returns) and conversion happens only at
+render time — see `pebble/src/c/units.h` (`PBK_USE_MILES` macro and
+`format_distance_km()` helper). When adding a new distance readout, route
+it through that helper rather than hard-coding "km". `DESIGN.md` →
+"Display units" has the longer rationale.
+
 ## Style conventions already in play
 
 - Comments only when the *why* is non-obvious. No docstrings on

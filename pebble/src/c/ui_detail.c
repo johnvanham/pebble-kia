@@ -4,6 +4,7 @@
 
 #include "app_state.h"
 #include "demo_data.h"
+#include "units.h"
 
 static Window *s_window;
 static Layer *s_canvas;
@@ -47,7 +48,7 @@ static void canvas_update(Layer *layer, GContext *ctx) {
 
   char buf[24];
 
-  snprintf(buf, sizeof(buf), "%lu km", (unsigned long)v->odo_km);
+  format_distance_km(v->odo_km, buf, sizeof(buf));
   draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Odometer", buf);
   y += row_h;
 

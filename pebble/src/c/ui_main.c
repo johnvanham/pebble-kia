@@ -5,6 +5,7 @@
 #include "app_state.h"
 #include "demo_data.h"
 #include "ui_detail.h"
+#include "units.h"
 
 static Window *s_window;
 static Layer *s_canvas;
@@ -103,7 +104,7 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   // --- Range ---
   GFont range_font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   char range_buf[16];
-  snprintf(range_buf, sizeof(range_buf), "%d km", v->range_km);
+  format_distance_km(v->range_km, range_buf, sizeof(range_buf));
   GRect range_rect = GRect(0, soc_y + 66, b.size.w, 26);
   graphics_draw_text(ctx, range_buf, range_font, range_rect,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
