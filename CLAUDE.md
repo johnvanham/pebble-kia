@@ -57,8 +57,15 @@ SDK docs rather than guessing API shapes. Known gotchas:
 
 ## Git and commits
 
-- Development branch: `claude/pebble-kia-watch-app-CtLHo`. Push only
-  there unless the user explicitly redirects.
+- Branch freely. The whole project is developed by Claude, and the
+  owner is happy for new sessions to create their own branches rather
+  than all piling onto one. Reasonable defaults:
+  - Phase-scoped or topic-scoped branches (`claude/<short-topic>`) for
+    anything non-trivial, so the history reads phase by phase.
+  - Direct commits to `main` are fine for small fixes, docs, and
+    status-table updates.
+  - Leave whichever branch the harness starts you on as the active
+    branch unless there's a reason to cut a new one.
 - Commit messages so far: imperative subject line, blank line, body
   explaining the *why* (not the what). No trailers, no emojis. Match
   that style.
