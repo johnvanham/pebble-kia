@@ -16,24 +16,30 @@ The phone companion is a no-op stub and the proxy hasn't been built yet.
 See [`DESIGN.md`](./DESIGN.md) for architecture, phased plan, operating
 assumptions, and the decision record around proxy vs. direct mode.
 
-| Component              | Status                          |
-| ---------------------- | ------------------------------- |
-| Pebble watchapp (C)    | Phase 1 — runs with dummy data  |
-| PebbleKit JS companion | No-op stub                      |
-| Self-hosted proxy      | Not built yet                   |
-| HA / dashboard clients | Future                          |
+| Component              | Status                                           |
+| ---------------------- | ------------------------------------------------ |
+| Pebble watchapp (C)    | Phase 1 — runs with dummy data                   |
+| PebbleKit JS companion | No-op stub                                       |
+| Self-hosted proxy      | Phase 2 — FastAPI skeleton, demo data source     |
+| HA / dashboard clients | Future                                           |
 
 ## Repo layout
 
 ```
-DESIGN.md        architecture, phased plan, decisions
-README.md        this file
-pebble/          Pebble watchapp
+DESIGN.md          architecture, phased plan, decisions
+README.md          this file
+pebble/            Pebble watchapp
   package.json
   wscript
-  src/c/         watchapp C source
-  src/pkjs/      PebbleKit JS companion (stub for now)
+  src/c/           watchapp C source
+  src/pkjs/        PebbleKit JS companion (stub for now)
   resources/
+proxy/             FastAPI proxy (phase 2: demo data source only)
+  app/
+  demo-data.json   editable sample payload
+  Dockerfile
+  docker-compose.yml
+  Caddyfile.example
 ```
 
 ## Prerequisites
@@ -107,7 +113,7 @@ configuration is deferred until phase 5.
 The phased plan lives in `DESIGN.md`. Short version:
 
 1. Watchapp with demo data ← **done**
-2. FastAPI proxy skeleton (stub endpoints, Dockerfile, Caddy snippet)
+2. FastAPI proxy skeleton (demo data source, auth, caching) ← **in progress**
 3. Proxy wired to `hyundai_kia_connect_api` with SQLite persistence
 4. End-to-end: companion calls proxy, watch renders real data
 5. Detail + vehicle picker polish, configuration UI

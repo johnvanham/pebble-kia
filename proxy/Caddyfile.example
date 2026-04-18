@@ -1,0 +1,9 @@
+# Drop this block into the existing Caddyfile on the Pi. Caddy's automatic
+# Let's Encrypt TLS covers the subdomain as soon as the DNS points at the Pi.
+# Assumes the compose service binds to 127.0.0.1:8000 (as docker-compose.yml
+# sets by default).
+
+kia-proxy.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+}

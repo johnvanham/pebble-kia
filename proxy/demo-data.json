@@ -1,0 +1,40 @@
+{
+  "vehicles": [
+    {
+      "id": "pv5-demo",
+      "vin": "KNEEV5AB1NA000001",
+      "nickname": "PV5",
+      "model": "PV5 Passenger",
+      "status": {
+        "soc_pct": 72,
+        "range_km": 284,
+        "is_charging": false,
+        "charge_kw": 0.0,
+        "charge_eta_min": 0,
+        "plug": "unplugged",
+        "doors_locked": true,
+        "cabin_temp_c": 18,
+        "odo_km": 3421,
+        "updated_at": "2026-04-18T10:00:00Z"
+      }
+    },
+    {
+      "id": "ev9-demo",
+      "vin": "KNAEW5AB1NA000002",
+      "nickname": "EV9",
+      "model": "EV9 GT-Line",
+      "status": {
+        "soc_pct": 54,
+        "range_km": 212,
+        "is_charging": true,
+        "charge_kw": 11.2,
+        "charge_eta_min": 95,
+        "plug": "ac",
+        "doors_locked": true,
+        "cabin_temp_c": 16,
+        "odo_km": 18734,
+        "updated_at": "2026-04-18T09:45:00Z"
+      }
+    }
+  ]
+}

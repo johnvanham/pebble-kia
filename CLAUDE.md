@@ -16,9 +16,12 @@ deliberate — don't re-litigate it without being asked.
 
 ## Current phase
 
-Phase 1 is done: watchapp runs against an on-device demo data module
-(`pebble/src/c/demo_data.c`). No network code yet. PebbleKit JS and the
-proxy are unbuilt / stubbed.
+Phase 1 done: watchapp runs against an on-device demo data module
+(`pebble/src/c/demo_data.c`). Phase 2 under way: FastAPI proxy
+(`proxy/`) with a pluggable data-source layer. Only the `demo` source
+exists today (reads an editable `proxy/demo-data.json`); the `live`
+source is a 501 stub, implemented in phase 3. The watch and companion
+do not yet talk to the proxy — that's the remainder of phase 2.
 
 Status table at the top of `README.md` reflects current state; update it
 as phases land.
@@ -30,9 +33,41 @@ as phases land.
 - `README.md` — user-facing quickstart (build, emulator, sideload).
 - `pebble/` — watchapp. `src/c/` is the C source, `src/pkjs/index.js`
   is the companion stub.
-- `proxy/` — will exist once phase 2 starts. Plan is FastAPI + Docker,
-  deployed behind the user's existing Raspberry Pi Caddy (automatic TLS
-  via Let's Encrypt).
+- `proxy/` — FastAPI service. `app/sources/` holds the data-source
+  layer; `demo-data.json` is the editable sample payload. Dockerfile +
+  `docker-compose.yml` + `Caddyfile.example` cover deployment behind
+  the user's existing Raspberry Pi Caddy (automatic TLS via Let's
+  Encrypt).
+
+## Working on the proxy
+
+Python 3.13 managed by `uv`. Iterate locally with:
+
+```sh
+cd proxy
+cp .env.example .env   # fill in PROXY_BEARER_TOKEN
+uv sync
+uv run uvicorn app.main:app --reload
+```
+
+Guardrails:
+
+- Never add endpoints that mutate the vehicle (lock, start charging,
+  climate). Read-only; commands are a separate risk surface — see
+  DESIGN.md "Out of scope".
+- The `demo` and `live` sources must expose exactly the same shape.
+  When adding a field, extend `app/models.py`, update the demo JSON,
+  and leave a clear TODO on the live side if it's not yet
+  implementable.
+- Cache/rate-limit belong in `app/cache.py`, not in individual sources.
+  The 12V drain concern only matters for `live`, but `demo` uses the
+  same cache so behaviour is testable without a car.
+- Live source is a stub today — raise `LiveNotYetImplemented` rather
+  than faking data; it surfaces as HTTP 501 and stays loud.
+- The machine this runs on uses Podman, not Docker proper (the `docker`
+  binary is the `podman-docker` shim). Dockerfiles work unchanged;
+  `docker compose` is alias for `podman compose`. Watch for SELinux
+  label issues on bind mounts (`:z` / `:Z`).
 
 ## Working on the watchapp
 

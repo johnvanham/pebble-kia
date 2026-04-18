@@ -122,6 +122,23 @@ informed choice to strip the proxy out.
   Those clients use their own bearer tokens with the same shared-secret
   scheme; we can upgrade to per-client tokens later if it ever matters.
 
+#### Data-source abstraction
+
+The proxy has a `DataSource` protocol (`proxy/app/sources/base.py`) with
+two implementations selected by the `DATA_SOURCE` env var:
+
+- `demo` — reads `demo-data.json` on every fetch. The file is intended
+  to be hand-edited so the owner can simulate vehicle state changes
+  (e.g. start charging, deplete the battery) without a real car. Used
+  while phases 2–4 are under development and for offline iteration
+  later.
+- `live` — will call `hyundai_kia_connect_api`. Currently a stub that
+  returns 501 on every call; implemented in phase 3.
+
+Both sources sit behind the same cache layer and rate-limit, so swapping
+between them is a config change with no wire-format impact. Clients
+(watch, HA, dashboard) are unaware of which source is serving them.
+
 ### Token bootstrap (`proxy/bootstrap/`)
 
 - Kia EU login is a browser-based SSO flow that can't be automated purely from
@@ -196,24 +213,33 @@ compile-time constant because the deployment is single-user.
 
 ## Phased plan
 
-Each phase ends with something runnable and committable.
+Each phase ends with something runnable and committable. Work so far has
+run slightly out of the original ordering (watchapp with compiled demo
+data came first because it unblocks UI iteration without waiting on any
+server); the list below reflects the path actually taken.
 
-1. **Proxy skeleton.** FastAPI app, auth middleware, in-memory stub responses
-   for `/vehicles` and `/vehicles/{id}/status`. Dockerfile + compose.
-2. **Proxy wired to Kia.** Integrate `hyundai_kia_connect_api`, document the
-   one-time Selenium bootstrap, add SQLite persistence + rate limiting.
-3. **Pebble watchapp hello-world.** C scaffolding, package.json, AppMessage
-   ping/pong to the JS companion, emulator build working.
-4. **End-to-end stats.** Companion calls proxy; watch renders main screen from
-   real data; persist last-known state on the watch.
-5. **Detail + picker screens, configuration UI, polish.**
-6. **PV5-specific validation.** Once a PV5 is on the account, inspect the real
-   `ccs2/carstatus/latest` payload, patch the proxy's vehicle adapter, confirm
-   field mappings (the PV5 is new enough that the community library may not
-   yet normalise every field correctly).
+1. **Watchapp with compiled demo data.** C scaffolding, package.json,
+   on-device dummy data module, emulator build working. **Done.**
+2. **Proxy skeleton with demo data source.** FastAPI app, bearer auth,
+   in-memory cache with rate limit, pluggable data-source layer. Ships
+   with a `demo` source that reads `demo-data.json`; the `live` source
+   is a stub that returns 501. Dockerfile + compose + Caddyfile snippet.
+   **In progress.**
+3. **Proxy wired to Kia.** Implement the `live` source on top of
+   `hyundai_kia_connect_api`, document the one-time Selenium bootstrap,
+   add SQLite persistence so cached state survives restarts.
+4. **End-to-end.** PebbleKit JS companion calls the proxy; watch renders
+   main screen from whatever the proxy returns (demo or live); persist
+   last-known state on the watch so boot shows data immediately.
+5. **Detail + picker screens polish, Clay configuration UI** for proxy
+   URL, bearer token, and units preference.
+6. **PV5-specific validation.** Once a PV5 is on the account, inspect
+   the real `ccs2/carstatus/latest` payload, patch the proxy's vehicle
+   adapter, confirm field mappings (the PV5 is new enough that the
+   community library may not yet normalise every field correctly).
 
-Phases 1–5 can be built against an EV6/EV9 today; phase 6 is the PV5-specific
-pass once the vehicle is delivered.
+Phases 1–5 can be built against an EV6/EV9 today; phase 6 is the
+PV5-specific pass once the vehicle is delivered.
 
 ## Risks and open questions
 
