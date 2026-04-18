@@ -6,6 +6,31 @@ Goal: view live stats for a Kia PV5 Passenger (and future vehicles on the same
 account) from a Pebble smartwatch — state of charge, estimated range, charging
 status, doors/locks, odometer, cabin temperature, last-known location.
 
+## Operating assumptions
+
+This is a **single-user, self-hosted** project. Scope is intentionally
+narrow:
+
+- **One operator (the author).** Only one Kia account, one phone, one or two
+  watches. The proxy is not multi-tenant; auth is a single shared bearer
+  token, not per-user login.
+- **Open source, not a service.** The code is public so others can fork and
+  self-host for their own vehicles, but we do **not** run a hosted service
+  for anyone else to connect their Kia account to. That eliminates a large
+  class of concerns (GDPR data-controller obligations, abuse monitoring,
+  account isolation, SLAs, Kia ToS exposure from third-party data handling).
+- **Existing home infra is the deployment target.** A Raspberry Pi already
+  runs Docker with a Caddy reverse proxy doing automatic TLS via Let's
+  Encrypt. The proxy ships as a Docker image and slots in behind Caddy with
+  a single `docker compose` service and a Caddyfile entry. No new hosting
+  cost, no new TLS plumbing.
+- **The proxy earns its keep beyond the watch.** Because Home Assistant and
+  a future custom web dashboard will also consume the same vehicle data,
+  the proxy is not overhead solely for the Pebble app — it's the shared
+  backend for all Kia-data clients in the house. This tips the build-vs-buy
+  argument decisively toward building the proxy even though a direct
+  phone-to-Kia approach is technically feasible (see "Direct mode" below).
+
 ## Architecture
 
 ```
@@ -40,6 +65,39 @@ Three tiers, each with a specific job:
   token rotation happen without touching the phone or watch builds.
 - The proxy is also the right place to absorb API shape changes (Kia EU
   periodically reshapes responses) without republishing the watchapp.
+- The proxy is a **shared backend** for this watchapp, Home Assistant, and a
+  planned custom dashboard. Doing the auth and caching work once in one place
+  is cheaper than reimplementing it in each client.
+
+### Alternative considered: direct mode (phone → Kia, no proxy)
+
+It is technically possible for the PebbleKit JS companion to call the Kia
+EU API itself: do the one-time login inside a Clay configuration WebView
+(which is a full browser and can handle the SSO redirect chain), stash the
+refresh token in `localStorage`, and have the companion poll Kia directly
+thereafter.
+
+**Pros:** no server to run; one less hop; works even when the Pi is down.
+
+**Cons, specific to this project:**
+
+- Porting `hyundai_kia_connect_api`'s auth logic (Python) into the
+  constrained PebbleKit JS sandbox is substantial work — crypto gaps
+  (WebCrypto coverage is spotty), no DOM for fallback flows, and every
+  time Kia changes the EU login the watchapp has to be rebuilt and
+  reinstalled.
+- Kia credentials/refresh token live unencrypted in `localStorage`.
+- No central cache — Home Assistant and the dashboard would each have to
+  reimplement auth, duplicating effort and multiplying 12V-drain risk on
+  the vehicle.
+- No background execution. PebbleKit JS only runs when the watch pokes
+  it, so "notify me when charging completes" type features need a server
+  anyway.
+
+Given the Pi + Caddy infra is already there and the proxy is reused by
+other clients, direct mode is explicitly **rejected for this project**.
+It's documented here so a forker without home-server infra can make an
+informed choice to strip the proxy out.
 
 ## Components
 
@@ -55,7 +113,14 @@ Three tiers, each with a specific job:
   every call. No per-user login — this is a single-user system.
 - Persistence: SQLite file for the refresh token and last-known vehicle state.
   State survives restarts so the watch sees data immediately on boot.
-- Deployment: Docker Compose, HTTPS via Caddy or a Cloudflare tunnel.
+- Deployment: Docker image on the existing Raspberry Pi. Caddy (already
+  running on the Pi with automatic Let's Encrypt TLS) is extended with a
+  new site block that reverse-proxies a subdomain to the container. No new
+  TLS machinery, no new host.
+- Other clients: the same HTTP API is consumed by Home Assistant (via a
+  custom sensor / REST integration) and by a future internal web dashboard.
+  Those clients use their own bearer tokens with the same shared-secret
+  scheme; we can upgrade to per-client tokens later if it ever matters.
 
 ### Token bootstrap (`proxy/bootstrap/`)
 
