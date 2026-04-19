@@ -1,0 +1,41 @@
+{
+  "vehicles": [
+    {
+      "id": "pv5-demo",
+      "vin": "KNEEV5AB1NA000001",
+      "nickname": "PV5",
+      "model": "PV5 Passenger"
+    }
+  ],
+  "scenario": {
+    "loop_seconds": 900,
+    "vehicles": {
+      "pv5-demo": {
+        "baseline": {
+          "soc_pct": 75,
+          "range_km": 300,
+          "is_charging": false,
+          "charge_kw": 0.0,
+          "charge_eta_min": 0,
+          "plug": "unplugged",
+          "doors_locked": true,
+          "cabin_temp_c": 14,
+          "odo_km": 3421,
+          "is_climate_on": false
+        },
+        "events": [
+          { "at_s": 30,  "name": "unlock",       "patch": { "doors_locked": false } },
+          { "at_s": 60,  "name": "drive_start",  "patch": { "cabin_temp_c": 18 } },
+          { "at_s": 120, "patch": { "soc_pct": 72, "range_km": 288, "odo_km": 3425 } },
+          { "at_s": 240, "patch": { "soc_pct": 68, "range_km": 272, "odo_km": 3432 } },
+          { "at_s": 360, "patch": { "soc_pct": 65, "range_km": 260, "odo_km": 3440 } },
+          { "at_s": 480, "patch": { "soc_pct": 61, "range_km": 244, "odo_km": 3449 } },
+          { "at_s": 540, "name": "lock",         "patch": { "doors_locked": true, "cabin_temp_c": 16 } },
+          { "at_s": 720, "name": "unlock_return","patch": { "doors_locked": false } },
+          { "at_s": 780, "patch": { "soc_pct": 58, "range_km": 232, "odo_km": 3458 } },
+          { "at_s": 840, "name": "lock_home",    "patch": { "doors_locked": true, "cabin_temp_c": 18 } }
+        ]
+      }
+    }
+  }
+}

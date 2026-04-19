@@ -1,0 +1,45 @@
+{
+  "vehicles": [
+    {
+      "id": "pv5-demo",
+      "vin": "KNEEV5AB1NA000001",
+      "nickname": "PV5",
+      "model": "PV5 Passenger"
+    }
+  ],
+  "scenario": {
+    "loop_seconds": 2700,
+    "vehicles": {
+      "pv5-demo": {
+        "baseline": {
+          "soc_pct": 20,
+          "range_km": 80,
+          "is_charging": false,
+          "charge_kw": 0.0,
+          "charge_eta_min": 0,
+          "plug": "unplugged",
+          "doors_locked": true,
+          "cabin_temp_c": 12,
+          "odo_km": 3421,
+          "is_climate_on": false
+        },
+        "events": [
+          { "at_s": 60,   "name": "plug_in",       "patch": { "plug": "dc" } },
+          { "at_s": 90,   "name": "charge_start",  "patch": { "is_charging": true, "charge_kw": 180.0, "charge_eta_min": 28 } },
+          { "at_s": 300,  "patch": { "charge_kw": 150.0, "soc_pct": 35, "range_km": 140, "charge_eta_min": 22 } },
+          { "at_s": 600,  "patch": { "charge_kw": 120.0, "soc_pct": 50, "range_km": 200, "charge_eta_min": 16 } },
+          { "at_s": 900,  "patch": { "charge_kw": 90.0,  "soc_pct": 62, "range_km": 248, "charge_eta_min": 12 } },
+          { "at_s": 1200, "patch": { "charge_kw": 60.0,  "soc_pct": 72, "range_km": 288, "charge_eta_min": 8 } },
+          { "at_s": 1500, "patch": { "charge_kw": 35.0,  "soc_pct": 78, "range_km": 312, "charge_eta_min": 4 } },
+          { "at_s": 1800, "name": "charge_end",    "patch": { "is_charging": false, "charge_kw": 0.0, "soc_pct": 80, "range_km": 320, "charge_eta_min": 0 } },
+          { "at_s": 1860, "name": "unplug",        "patch": { "plug": "unplugged" } },
+          { "at_s": 2100, "name": "climate_start", "patch": { "is_climate_on": true, "cabin_temp_c": 16 } },
+          { "at_s": 2280, "patch": { "cabin_temp_c": 20 } },
+          { "at_s": 2400, "name": "unlock",        "patch": { "doors_locked": false } },
+          { "at_s": 2460, "name": "climate_end",   "patch": { "is_climate_on": false } },
+          { "at_s": 2520, "name": "lock",          "patch": { "doors_locked": true } }
+        ]
+      }
+    }
+  }
+}

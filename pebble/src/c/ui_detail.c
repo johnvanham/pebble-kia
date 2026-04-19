@@ -60,6 +60,10 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Cabin", buf);
   y += row_h;
 
+  draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Climate",
+           v->is_climate_on ? "On" : "Off");
+  y += row_h;
+
   draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Doors",
            v->doors_locked ? "Locked" : "Unlocked");
   y += row_h;

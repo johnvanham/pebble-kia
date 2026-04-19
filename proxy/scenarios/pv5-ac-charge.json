@@ -1,0 +1,40 @@
+{
+  "vehicles": [
+    {
+      "id": "pv5-demo",
+      "vin": "KNEEV5AB1NA000001",
+      "nickname": "PV5",
+      "model": "PV5 Passenger"
+    }
+  ],
+  "scenario": {
+    "loop_seconds": 1200,
+    "vehicles": {
+      "pv5-demo": {
+        "baseline": {
+          "soc_pct": 30,
+          "range_km": 120,
+          "is_charging": false,
+          "charge_kw": 0.0,
+          "charge_eta_min": 0,
+          "plug": "unplugged",
+          "doors_locked": true,
+          "cabin_temp_c": 18,
+          "odo_km": 3512,
+          "is_climate_on": false
+        },
+        "events": [
+          { "at_s": 30,  "name": "plug_in",      "patch": { "plug": "ac" } },
+          { "at_s": 60,  "name": "charge_start", "patch": { "is_charging": true, "charge_kw": 11.0, "charge_eta_min": 180 } },
+          { "at_s": 180, "patch": { "soc_pct": 38, "range_km": 152, "charge_eta_min": 165 } },
+          { "at_s": 360, "patch": { "soc_pct": 48, "range_km": 192, "charge_eta_min": 140 } },
+          { "at_s": 540, "patch": { "soc_pct": 58, "range_km": 232, "charge_eta_min": 115 } },
+          { "at_s": 720, "patch": { "soc_pct": 68, "range_km": 272, "charge_eta_min": 90 } },
+          { "at_s": 900, "patch": { "soc_pct": 75, "range_km": 300, "charge_eta_min": 60 } },
+          { "at_s": 1080, "name": "charge_end", "patch": { "is_charging": false, "charge_kw": 0.0, "soc_pct": 80, "range_km": 320, "charge_eta_min": 0 } },
+          { "at_s": 1140, "name": "unplug",     "patch": { "plug": "unplugged" } }
+        ]
+      }
+    }
+  }
+}

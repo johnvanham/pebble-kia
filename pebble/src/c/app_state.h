@@ -26,6 +26,7 @@ typedef struct {
   bool doors_locked;
   int8_t cabin_temp_c;
   uint32_t odo_km;
+  bool is_climate_on;
   time_t updated_at;
 } Vehicle;
 
@@ -39,6 +40,7 @@ typedef struct {
   bool doors_locked;
   int8_t cabin_temp_c;
   uint32_t odo_km;
+  bool is_climate_on;
   time_t updated_at;
 } VehicleStatus;
 

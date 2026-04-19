@@ -127,17 +127,22 @@ informed choice to strip the proxy out.
 The proxy has a `DataSource` protocol (`proxy/app/sources/base.py`) with
 two implementations selected by the `DATA_SOURCE` env var:
 
-- `demo` — reads `demo-data.json` on every fetch. The file is intended
-  to be hand-edited so the owner can simulate vehicle state changes
-  (e.g. start charging, deplete the battery) without a real car. Used
-  while phases 2–4 are under development and for offline iteration
-  later.
+- `demo` — reads `DEMO_DATA_FILE` on every fetch. The file can be a
+  static snapshot (hand-edited to freeze the UI at a particular state)
+  or a time-evolving scenario (baseline + list of events, each with an
+  `at_s` offset and a `patch` of status overrides). Scenario mode
+  loops on `loop_seconds` so a demo never ends; see
+  `proxy/scenarios/*.json` for shipped examples (rapid charge,
+  AC charge, daily drive, preconditioning).
 - `live` — will call `hyundai_kia_connect_api`. Currently a stub that
   returns 501 on every call; implemented in phase 3.
 
-Both sources sit behind the same cache layer and rate-limit, so swapping
-between them is a config change with no wire-format impact. Clients
-(watch, HA, dashboard) are unaware of which source is serving them.
+Both sources sit behind the same cache layer. Cache TTL is source-
+specific: `LIVE_REFRESH_MIN_SECONDS` (default 600) protects the 12V
+battery on live; `DEMO_REFRESH_MIN_SECONDS` (default 5) keeps scenario
+progression visible to polling clients without a long-press refresh
+every tick. Clients (watch, HA, dashboard) are unaware of which source
+is serving them.
 
 ### Token bootstrap (`proxy/bootstrap/`)
 
@@ -148,6 +153,32 @@ between them is a config change with no wire-format impact. Clients
 - Output: a refresh token written into the proxy's SQLite store. The proxy
   then runs headlessly and only re-bootstraps on token expiry or password
   change.
+
+### Notifications
+
+The companion polls the currently-selected vehicle every 15 seconds
+while the watchapp is alive, diffs the new status against the previous
+observation for that id, and fires a native Pebble notification
+(`Pebble.showSimpleNotificationOnPebble`) on meaningful transitions:
+charge start/end, plug/unplug, lock/unlock, climate on/off. Notifications
+appear on the watch as the normal OS notification card (vibration,
+brief on-screen card, dismissible with the Back button) whether the Kia
+app is in the foreground or the user's on a different screen.
+
+Deliberate scope limits for this phase:
+
+- **Polling only while the companion is alive.** PebbleKit JS does not
+  run in the background, so notifications stop when the user closes
+  the Kia app on the watch. A phase-3+ push path (proxy → timeline pin
+  or mobile-app-level webhook) is out of scope here; noted in
+  `IDEAS.md`.
+- **Only the currently-viewed vehicle is polled.** Switching vehicles
+  with Up/Down redirects the poll target. Polling every vehicle would
+  multiply Kia API load; not worth the battery cost for the one-car
+  common case.
+- **First observation is silent.** An id's first status response
+  establishes a baseline — we don't notify "charging started" at launch
+  just because the car was already charging when the app opened.
 
 ### PebbleKit JS companion (`pebble/src/pkjs/`)
 
@@ -203,6 +234,7 @@ Companion → watch (responses):
 | `DOORS_LOCKED`  | bool    |                                                      |
 | `CABIN_TEMP_C`  | int8    |                                                      |
 | `ODO_KM`        | uint32  |                                                      |
+| `IS_CLIMATE_ON` | bool    | Maps to `air_control_is_on` upstream                 |
 | `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
 | `ERROR_MSG`     | string  | Populated on failure; watch surfaces it in the UI    |
 

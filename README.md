@@ -132,9 +132,13 @@ or scp just that directory if you prefer.
 
 **Edit `proxy/demo-data.json`** so the vehicle list matches what you
 actually want to see. `updated_at` accepts `"-2m"`-style relative
-offsets so a hand-edited file stays fresh. (When phase 3 lands, you can
-set `DATA_SOURCE=live` in `.env` to talk to Kia instead. The demo source
-stays available for offline iteration.)
+offsets so a hand-edited file stays fresh. For a time-evolving demo
+(charging curves, lock/unlock cycles, climate events firing
+notifications on the watch), point `DEMO_DATA_FILE` at one of the
+scripted files under `proxy/scenarios/` — see `proxy/README.md` →
+"Scenario mode". (When phase 3 lands, you can set `DATA_SOURCE=live`
+in `.env` to talk to Kia instead. The demo source stays available for
+offline iteration.)
 
 **Run it** (still inside `pebble-kia/proxy`):
 

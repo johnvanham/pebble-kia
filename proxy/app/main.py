@@ -26,7 +26,12 @@ async def lifespan(app: FastAPI):
     settings = load_settings()
     app.state.settings = settings
     app.state.source = _build_source(settings)
-    app.state.cache = StatusCache(settings.live_refresh_min_seconds)
+    cache_seconds = (
+        settings.demo_refresh_min_seconds
+        if settings.data_source == "demo"
+        else settings.live_refresh_min_seconds
+    )
+    app.state.cache = StatusCache(cache_seconds)
     yield
 
 

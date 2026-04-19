@@ -78,6 +78,7 @@ static void handle_status(DictionaryIterator *in) {
   if ((t = dict_find(in, MESSAGE_KEY_DOORS_LOCKED)))   s.doors_locked = t->value->uint8 != 0;
   if ((t = dict_find(in, MESSAGE_KEY_CABIN_TEMP_C)))   s.cabin_temp_c = t->value->int8;
   if ((t = dict_find(in, MESSAGE_KEY_ODO_KM)))         s.odo_km = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_IS_CLIMATE_ON)))  s.is_climate_on = t->value->uint8 != 0;
   if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))     s.updated_at = (time_t)t->value->uint32;
   app_state_clear_error();
   app_state_apply_status(id_t->value->cstring, &s);

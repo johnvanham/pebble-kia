@@ -15,6 +15,7 @@
         "doors_locked": true,
         "cabin_temp_c": 18,
         "odo_km": 3421,
+        "is_climate_on": false,
         "updated_at": "-2m"
       }
     },
@@ -33,6 +34,7 @@
         "doors_locked": true,
         "cabin_temp_c": 16,
         "odo_km": 18734,
+        "is_climate_on": false,
         "updated_at": "-17m"
       }
     }

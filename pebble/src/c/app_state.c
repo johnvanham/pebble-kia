@@ -86,6 +86,7 @@ void app_state_apply_vehicle_list(const char (*ids)[VEHICLE_ID_LEN],
         s_vehicles[i].doors_locked = prev[j].doors_locked;
         s_vehicles[i].cabin_temp_c = prev[j].cabin_temp_c;
         s_vehicles[i].odo_km = prev[j].odo_km;
+        s_vehicles[i].is_climate_on = prev[j].is_climate_on;
         s_vehicles[i].updated_at = prev[j].updated_at;
         break;
       }
@@ -111,6 +112,7 @@ void app_state_apply_status(const char *id, const VehicleStatus *status) {
       v->doors_locked = status->doors_locked;
       v->cabin_temp_c = status->cabin_temp_c;
       v->odo_km = status->odo_km;
+      v->is_climate_on = status->is_climate_on;
       v->updated_at = status->updated_at;
       app_state_notify();
       return;

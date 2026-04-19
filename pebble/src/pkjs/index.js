@@ -1,6 +1,9 @@
 // PebbleKit JS companion — runs inside the Pebble mobile app (or pypkjs
 // in the emulator). Translates AppMessage requests from the watch into
 // HTTP calls against the self-hosted proxy, and packs responses back.
+// Also polls the current vehicle while the watchapp is alive and fires
+// native Pebble notifications on state transitions (charge start/end,
+// lock/unlock, plug/unplug, climate on/off).
 
 var Clay = require('pebble-clay');
 var clayConfig = require('./config');
@@ -8,6 +11,7 @@ var mk = require('message_keys');
 var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 
 var MAX_VEHICLES = 4;
+var POLL_MS = 15000;
 
 function log(msg) { console.log('[kia] ' + msg); }
 
@@ -58,9 +62,6 @@ function httpCall(method, path, cb) {
   req.timeout = 15000;
   var timedOut = false;
   req.ontimeout = function () { timedOut = true; };
-  // pypkjs does not fire `onerror` for connection failures — only `loadend`
-  // is reliable. Centralise the outcome classification here so this code
-  // works both on the mobile app's XHR and the emulator's shim.
   req.onloadend = function () {
     if (timedOut) return cb(new Error('Proxy timed out'));
     if (req.status === 0) return cb(new Error("Can't reach proxy"));
@@ -85,22 +86,6 @@ function parseIsoSeconds(s) {
   return isNaN(t) ? 0 : Math.floor(t / 1000);
 }
 
-function handleListRequest() {
-  httpGet('/vehicles', function (err, data) {
-    if (err) return sendError(err.message);
-    var vs = (data && data.vehicles) || [];
-    if (vs.length > MAX_VEHICLES) vs = vs.slice(0, MAX_VEHICLES);
-    var out = { RESP_KIND: 'list', VEHICLE_COUNT: vs.length };
-    for (var i = 0; i < vs.length; i++) {
-      out[mk.VEHICLE_ID + i] = String(vs[i].id || '');
-      out[mk.VEHICLE_NICK + i] = String(vs[i].nickname || vs[i].model || vs[i].id || '');
-    }
-    Pebble.sendAppMessage(out, null, function () {
-      sendError('Watch inbox full');
-    });
-  });
-}
-
 function statusMessage(vehicleId, data) {
   var s = (data && data.status) || {};
   return {
@@ -115,31 +100,145 @@ function statusMessage(vehicleId, data) {
     DOORS_LOCKED: s.doors_locked ? 1 : 0,
     CABIN_TEMP_C: s.cabin_temp_c | 0,
     ODO_KM: s.odo_km | 0,
+    IS_CLIMATE_ON: s.is_climate_on ? 1 : 0,
     UPDATED_AT: parseIsoSeconds(s.updated_at)
   };
 }
 
-function handleStatusRequest(vehicleId, force) {
-  if (!vehicleId) return sendError('No vehicle selected');
-  var go = force ? httpPost : httpGet;
-  var path = force
-    ? '/vehicles/' + encodeURIComponent(vehicleId) + '/refresh'
-    : '/vehicles/' + encodeURIComponent(vehicleId) + '/status';
-  go(path, function (err, data) {
+// --- Notification bookkeeping ----------------------------------------
+//
+// `prevStatus[id]` holds the last response we saw for a given vehicle
+// so we can detect transitions. `vehicleNames[id]` is the nickname for
+// the notification title. `currentVehicleId` is what the polling loop
+// auto-refreshes — it follows whichever vehicle the watch most recently
+// asked about, so switching vehicles with Up/Down immediately redirects
+// the poll. We only notify after the first observation for an id so a
+// fresh boot doesn't spam "charging started" for an already-charging car.
+
+var prevStatus = {};
+var vehicleNames = {};
+var currentVehicleId = null;
+
+function notify(title, body) {
+  log('notify: ' + title + ' — ' + body);
+  try {
+    Pebble.showSimpleNotificationOnPebble(title, body);
+  } catch (e) {
+    // Some runtimes expose the API under a different name; log and move on.
+    log('notify failed: ' + e.message);
+  }
+}
+
+function describePlug(code) {
+  if (code === 1) return 'AC';
+  if (code === 2) return 'DC';
+  return 'unplugged';
+}
+
+function detectTransitions(vehicleId, msg) {
+  var prev = prevStatus[vehicleId];
+  prevStatus[vehicleId] = msg;
+  if (!prev) return;  // first observation — establish baseline, don't notify
+
+  var name = vehicleNames[vehicleId] || vehicleId;
+
+  if (!prev.IS_CHARGING && msg.IS_CHARGING) {
+    var kw = (msg.CHARGE_KW_X10 / 10).toFixed(1);
+    var eta = msg.CHARGE_ETA_MIN > 0 ? ' • ETA ' + msg.CHARGE_ETA_MIN + ' min' : '';
+    notify(name + ': Charging', kw + ' kW' + eta);
+  } else if (prev.IS_CHARGING && !msg.IS_CHARGING) {
+    var done = msg.SOC_PCT >= 80 ? 'Charge complete' : 'Charging stopped';
+    notify(name + ': ' + done, msg.SOC_PCT + '% • ' + msg.RANGE_KM + ' km');
+  }
+
+  if (prev.PLUG !== msg.PLUG) {
+    if (prev.PLUG === 0 && msg.PLUG !== 0) {
+      notify(name + ': Plugged in', describePlug(msg.PLUG));
+    } else if (prev.PLUG !== 0 && msg.PLUG === 0) {
+      notify(name + ': Unplugged', msg.SOC_PCT + '% • ' + msg.RANGE_KM + ' km');
+    }
+  }
+
+  if (prev.DOORS_LOCKED !== msg.DOORS_LOCKED) {
+    notify(name + ': ' + (msg.DOORS_LOCKED ? 'Locked' : 'Unlocked'), '');
+  }
+
+  if (prev.IS_CLIMATE_ON !== msg.IS_CLIMATE_ON) {
+    var sub = msg.CABIN_TEMP_C + '°C cabin';
+    notify(name + ': Climate ' + (msg.IS_CLIMATE_ON ? 'on' : 'off'), sub);
+  }
+}
+
+// --- Request handlers ------------------------------------------------
+
+function handleListRequest() {
+  httpGet('/vehicles', function (err, data) {
     if (err) return sendError(err.message);
-    Pebble.sendAppMessage(statusMessage(vehicleId, data), null, function () {
+    var vs = (data && data.vehicles) || [];
+    if (vs.length > MAX_VEHICLES) vs = vs.slice(0, MAX_VEHICLES);
+    var out = { RESP_KIND: 'list', VEHICLE_COUNT: vs.length };
+    vehicleNames = {};
+    for (var i = 0; i < vs.length; i++) {
+      var id = String(vs[i].id || '');
+      var nick = String(vs[i].nickname || vs[i].model || id);
+      out[mk.VEHICLE_ID + i] = id;
+      out[mk.VEHICLE_NICK + i] = nick;
+      vehicleNames[id] = nick;
+    }
+    Pebble.sendAppMessage(out, null, function () {
       sendError('Watch inbox full');
     });
   });
 }
 
+function fetchAndDispatch(vehicleId, force, onDone) {
+  var go = force ? httpPost : httpGet;
+  var path = force
+    ? '/vehicles/' + encodeURIComponent(vehicleId) + '/refresh'
+    : '/vehicles/' + encodeURIComponent(vehicleId) + '/status';
+  go(path, function (err, data) {
+    if (err) { if (onDone) onDone(err); return sendError(err.message); }
+    var msg = statusMessage(vehicleId, data);
+    detectTransitions(vehicleId, msg);
+    Pebble.sendAppMessage(msg, null, function () {
+      sendError('Watch inbox full');
+    });
+    if (onDone) onDone(null);
+  });
+}
+
+function handleStatusRequest(vehicleId, force) {
+  if (!vehicleId) return sendError('No vehicle selected');
+  currentVehicleId = vehicleId;
+  fetchAndDispatch(vehicleId, force);
+}
+
+// --- Polling loop ----------------------------------------------------
+//
+// Kicks off once on ready and then every POLL_MS while the companion is
+// alive. Only polls the current vehicle — polling all is overkill for
+// the demo and would increase battery drain on a real link. Error
+// handling in fetchAndDispatch already suppresses duplicate error
+// messages during a stretch of failures.
+
+var pollTimer = null;
+
+function pollTick() {
+  if (!currentVehicleId) return;
+  fetchAndDispatch(currentVehicleId, false);
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(pollTick, POLL_MS);
+}
+
+// --- Pebble event wiring ---------------------------------------------
+
 Pebble.addEventListener('ready', function () {
   log('companion ready');
-  // Nudge the watch so it knows we're here. The watch kicks off the real
-  // list fetch in response to any inbox message, which avoids the race
-  // where the watch sends its first request before the companion has
-  // connected.
   Pebble.sendAppMessage({ RESP_KIND: 'ready' });
+  startPolling();
 });
 
 Pebble.addEventListener('appmessage', function (e) {
@@ -160,8 +259,6 @@ Pebble.addEventListener('showConfiguration', function () {
 Pebble.addEventListener('webviewclosed', function (e) {
   if (!e || !e.response) return;
   try {
-    // clay.getSettings(response) writes to localStorage['clay-settings']
-    // as a side effect — that's the persistence we care about.
     clay.getSettings(e.response);
     log('config saved');
   } catch (err) {

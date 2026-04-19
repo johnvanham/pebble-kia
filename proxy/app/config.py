@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     data_source: Literal["demo", "live"] = Field("demo", alias="DATA_SOURCE")
     demo_data_file: Path = Field(Path("demo-data.json"), alias="DEMO_DATA_FILE")
     live_refresh_min_seconds: int = Field(600, alias="LIVE_REFRESH_MIN_SECONDS")
+    # Separate cache interval for the demo source — scenario-driven demos
+    # want short TTLs so polling reflects progression, while live wants
+    # long TTLs to protect the 12V battery.
+    demo_refresh_min_seconds: int = Field(5, alias="DEMO_REFRESH_MIN_SECONDS")
     log_level: str = Field("info", alias="LOG_LEVEL")
 
 

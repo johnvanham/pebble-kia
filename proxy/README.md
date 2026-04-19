@@ -70,6 +70,57 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 The response reflects the edit; subsequent GETs serve the same value
 until the cache interval elapses.
 
+## Scenario mode
+
+The same `DEMO_DATA_FILE` can hold a time-evolving scenario instead of a
+static snapshot. Point it at one of `scenarios/*.json` and the proxy
+walks an event list to compute the current state on every fetch — good
+for exercising charging curves, lock/unlock cycles, and climate
+transitions in the emulator.
+
+```sh
+DEMO_DATA_FILE=scenarios/pv5-rapid-charge.json uv run uvicorn app.main:app --reload
+```
+
+Shipped scenarios:
+
+| File                                 | What it plays out                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------- |
+| `scenarios/pv5-rapid-charge.json`    | 30 min DC rapid session with a realistic taper (180→150→120→90→60→35 kW), 20→80%, then unplug, climate on, unlock, lock. Loops every 45 min. |
+| `scenarios/pv5-ac-charge.json`       | Compressed 11 kW AC charge, 30→80%. Loops every 20 min.                |
+| `scenarios/pv5-daily-drive.json`     | Unlock → drive (SoC and range falling, odometer climbing) → lock → return. Loops every 15 min. |
+| `scenarios/pv5-preconditioning.json` | Cold morning: climate starts, cabin warms, unplug, unlock, drive off. Loops every 10 min. |
+
+Schema of a scenario file:
+
+```json
+{
+  "vehicles": [{ "id": "pv5-demo", "vin": "...", "nickname": "PV5", "model": "..." }],
+  "scenario": {
+    "loop_seconds": 2700,
+    "vehicles": {
+      "pv5-demo": {
+        "baseline": { "soc_pct": 20, "plug": "unplugged", ... },
+        "events": [
+          { "at_s": 60,  "name": "plug_in",      "patch": { "plug": "dc" } },
+          { "at_s": 90,  "name": "charge_start", "patch": { "is_charging": true, "charge_kw": 180 } }
+        ]
+      }
+    }
+  }
+}
+```
+
+State at time T is the baseline with every patch whose `at_s ≤ T` applied
+in order; T loops every `loop_seconds` so the demo never ends. The
+optional `name` field is what the companion uses to label notifications.
+Scenario time starts from proxy boot (monotonic), so restarting the
+proxy replays from the top.
+
+`DEMO_REFRESH_MIN_SECONDS` (default 5) keeps the proxy cache short while
+running a scenario so the companion's polling loop sees progression
+instead of cached values.
+
 ## Run in Docker
 
 ```sh
@@ -93,5 +144,6 @@ All settings are environment variables (see `.env.example`):
 - `PROXY_BEARER_TOKEN` — required; clients send this as `Authorization: Bearer …`.
 - `DATA_SOURCE` — `demo` (default) or `live`. `live` currently 501s on every call.
 - `DEMO_DATA_FILE` — path to the JSON file the demo source reads. Relative paths resolve against the working directory.
-- `LIVE_REFRESH_MIN_SECONDS` — min seconds between live pulls per vehicle. Defaults to 600.
+- `LIVE_REFRESH_MIN_SECONDS` — min seconds between live pulls on the live source. Defaults to 600. Protects the 12V battery from aggressive polling.
+- `DEMO_REFRESH_MIN_SECONDS` — same knob, demo source. Defaults to 5 so scenario progression is visible to polling clients.
 - `LOG_LEVEL` — uvicorn log level. Defaults to `info`.

@@ -27,6 +27,7 @@ class VehicleStatus(BaseModel):
     doors_locked: bool
     cabin_temp_c: int
     odo_km: int = Field(..., ge=0)
+    is_climate_on: bool = False
     updated_at: datetime
 
 
