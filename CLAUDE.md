@@ -151,6 +151,11 @@ SDK docs rather than guessing API shapes. Known gotchas:
 - Commit messages so far: imperative subject line, blank line, body
   explaining the *why* (not the what). No trailers, no emojis. Match
   that style.
+- **Push after committing.** On this project the owner has granted
+  standing permission to `git push` whenever a commit lands, so the
+  default "don't push unless asked" guardrail does not apply here.
+  Push to whichever branch you're on (normally `main`). Never force
+  push to `main` — if a push is rejected, investigate why.
 - Do **not** open pull requests unless explicitly asked.
 
 ## Display units
