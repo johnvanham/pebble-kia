@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     # want short TTLs so polling reflects progression, while live wants
     # long TTLs to protect the 12V battery.
     demo_refresh_min_seconds: int = Field(5, alias="DEMO_REFRESH_MIN_SECONDS")
+    # Transition detector. Runs as a background asyncio task and fires
+    # ntfy pushes on state changes. Interval is independent of the cache
+    # TTL — it wants frequent enough to catch brief transitions.
+    detector_interval_seconds: int = Field(20, alias="DETECTOR_INTERVAL_SECONDS")
+    # ntfy notifier. Leave NTFY_URL empty to disable push (transitions
+    # are still logged so the detector itself is observable).
+    ntfy_url: str = Field("", alias="NTFY_URL")
+    ntfy_topic: str = Field("", alias="NTFY_TOPIC")
+    ntfy_auth_token: str = Field("", alias="NTFY_AUTH_TOKEN")
     log_level: str = Field("info", alias="LOG_LEVEL")
 
 

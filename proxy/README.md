@@ -146,4 +146,30 @@ All settings are environment variables (see `.env.example`):
 - `DEMO_DATA_FILE` — path to the JSON file the demo source reads. Relative paths resolve against the working directory.
 - `LIVE_REFRESH_MIN_SECONDS` — min seconds between live pulls on the live source. Defaults to 600. Protects the 12V battery from aggressive polling.
 - `DEMO_REFRESH_MIN_SECONDS` — same knob, demo source. Defaults to 5 so scenario progression is visible to polling clients.
+- `DETECTOR_INTERVAL_SECONDS` — how often the transition detector polls its source to diff for notifications. Defaults to 20.
+- `NTFY_URL` / `NTFY_TOPIC` / `NTFY_AUTH_TOKEN` — push-notification destination. Leave `NTFY_URL` empty to disable. See "Notifications" below.
 - `LOG_LEVEL` — uvicorn log level. Defaults to `info`.
+
+## Notifications
+
+An asyncio background task in the proxy (`app/detector.py`) polls each
+vehicle's status every `DETECTOR_INTERVAL_SECONDS`, diffs against the
+last observation, and fires an ntfy push on transitions worth
+surfacing: charge start/end, plug/unplug, lock/unlock, climate on/off.
+First observation for a given vehicle is silent so a process restart
+doesn't re-announce state that was already true.
+
+Pushes go to ntfy, which is bundled in `docker-compose.yml` so the
+whole stack is self-hosted. The phone installs the ntfy app,
+subscribes to your topic, and gets standard OS notifications — which
+the Pebble mobile app bridges to the watch automatically, so the
+watchapp does not need to be open.
+
+To enable push: set `NTFY_TOPIC` (any guess-hard string you like — the
+topic name is your only access control on the default ntfy config)
+and, if pointing at a non-compose ntfy, `NTFY_URL`. The compose stack
+defaults `NTFY_URL=http://ntfy:80` internally.
+
+Leaving `NTFY_TOPIC` empty disables push; the detector still runs and
+logs what it would have sent, which is useful for watching the
+scenario engine exercise state changes without noise on your phone.

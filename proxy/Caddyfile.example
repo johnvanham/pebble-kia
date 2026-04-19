@@ -1,9 +1,19 @@
-# Drop this block into the existing Caddyfile on the Pi. Caddy's automatic
-# Let's Encrypt TLS covers the subdomain as soon as the DNS points at the Pi.
-# Assumes the compose service binds to 127.0.0.1:8000 (as docker-compose.yml
-# sets by default).
+# Drop these blocks into the existing Caddyfile on the Pi. Caddy's
+# automatic Let's Encrypt TLS covers both subdomains as soon as DNS
+# points at the Pi.
 
 kia-proxy.example.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8000
+}
+
+# ntfy server for push notifications. The phone subscribes from
+# anywhere using this URL; the proxy (running in the same compose
+# network) reaches ntfy at http://ntfy:80 directly and does not use
+# this public entrypoint. Caddy's default buffering breaks ntfy's
+# streaming endpoints, so disable it.
+ntfy.example.com {
+    reverse_proxy 127.0.0.1:2586 {
+        flush_interval -1
+    }
 }

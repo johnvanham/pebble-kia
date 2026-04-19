@@ -156,29 +156,41 @@ is serving them.
 
 ### Notifications
 
-The companion polls the currently-selected vehicle every 15 seconds
-while the watchapp is alive, diffs the new status against the previous
-observation for that id, and fires a native Pebble notification
-(`Pebble.showSimpleNotificationOnPebble`) on meaningful transitions:
-charge start/end, plug/unplug, lock/unlock, climate on/off. Notifications
-appear on the watch as the normal OS notification card (vibration,
-brief on-screen card, dismissible with the Back button) whether the Kia
-app is in the foreground or the user's on a different screen.
+Notifications are driven from the proxy, not the companion. An
+asyncio background task (`proxy/app/detector.py`) polls each vehicle
+on `DETECTOR_INTERVAL_SECONDS`, diffs against the last observation,
+and pushes to ntfy on meaningful transitions (charge start/end,
+plug/unplug, lock/unlock, climate on/off). The phone runs the ntfy
+client app subscribed to the configured topic, the phone shows the
+standard OS notification, and the Pebble mobile app bridges that OS
+notification to the watch — so pushes reach the wrist whether the
+Kia app is open, closed, or not even installed in the watch locker.
 
-Deliberate scope limits for this phase:
+Why this layout rather than Rebble timeline pins or watch-scheduled
+wakeups:
 
-- **Polling only while the companion is alive.** PebbleKit JS does not
-  run in the background, so notifications stop when the user closes
-  the Kia app on the watch. A phase-3+ push path (proxy → timeline pin
-  or mobile-app-level webhook) is out of scope here; noted in
-  `IDEAS.md`.
-- **Only the currently-viewed vehicle is polled.** Switching vehicles
-  with Up/Down redirects the poll target. Polling every vehicle would
-  multiply Kia API load; not worth the battery cost for the one-car
-  common case.
-- **First observation is silent.** An id's first status response
-  establishes a baseline — we don't notify "charging started" at launch
-  just because the car was already charging when the app opened.
+- **Works without the watchapp running.** The OS-notification bridge
+  is Pebble's normal path; we just feed it the right notification via
+  the same mechanism SMS or Slack use.
+- **Phone gets the notification too**, which Rebble timeline pins
+  don't do — useful when the watch isn't on the wrist.
+- **Self-hostable.** ntfy runs in the same compose stack as the
+  proxy, behind the same Caddy. No third-party push service, no
+  per-vendor push keys (APNS/FCM), no risk of a service going away
+  (the feared Pushbullet scenario).
+- **Testable** without Rebble account / OAuth dance.
+
+Deliberate scope limits:
+
+- **Detection resolution equals the poll interval.** A transition that
+  starts and ends inside one interval is missed. For vehicle events
+  this is academic — nothing toggles that fast.
+- **First observation for a vehicle id is silent.** No "charging
+  started" spam when the proxy restarts mid-session.
+- **The transition layer is stateless across restarts.** If the proxy
+  crashes mid-session and comes back up, it re-establishes baseline
+  silently and reports transitions forward from there. Phase 3+ can
+  persist last-known state to sqlite if it matters.
 
 ### PebbleKit JS companion (`pebble/src/pkjs/`)
 

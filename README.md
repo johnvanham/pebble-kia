@@ -12,15 +12,17 @@ as a hosted service.
 
 | Component              | Status                                                     |
 | ---------------------- | ---------------------------------------------------------- |
-| Pebble watchapp (C)    | Fetches vehicle list + status from the companion           |
-| PebbleKit JS companion | Clay config page; calls the proxy and packs AppMessage     |
-| Self-hosted proxy      | FastAPI, demo data source, in-memory cache + rate limit    |
+| Pebble watchapp (C)    | Fetches vehicle list + status; spinner, live-ticking ago   |
+| PebbleKit JS companion | Clay config page (proxy URL, token, miles/km toggle)       |
+| Self-hosted proxy      | FastAPI, demo data source, cache + rate limit              |
+| Scenario engine        | Time-evolving demos under `proxy/scenarios/`               |
+| Push notifications     | Proxy detector → ntfy (self-hosted) → phone/watch          |
 | Live Kia integration   | Not built yet — proxy has a `demo` source only             |
 | HA / dashboard clients | Future                                                     |
 
-End-to-end demo mode runs today: edit `proxy/demo-data.json`, long-press
-SELECT on the watch, the proxy re-reads the file and the new values
-render.
+End-to-end demo mode runs today: pick a scenario, the proxy replays
+charge curves / lock cycles / climate on/off, pushes arrive on the
+phone (and bridge to the watch) as standard OS notifications.
 
 See [`DESIGN.md`](./DESIGN.md) for architecture, phased plan, operating
 assumptions, and the decision record around proxy vs. direct mode.
@@ -99,6 +101,21 @@ pebble emu-app-config
 pebble logs --emulator basalt        # tail APP_LOG + companion output
 ```
 
+**Exercise a scenario** (time-evolving demo):
+
+```sh
+# stop the static proxy, then re-run pointing at a scenario
+DEMO_DATA_FILE=scenarios/pv5-rapid-charge.json uv run uvicorn app.main:app --port 8000
+
+# watch proxy-side push detection fire (no phone app needed — pushes
+# go to a NullNotifier when NTFY_TOPIC is unset, just logged)
+#   [INFO] notifier: would notify: PV5: Plugged in — DC
+#   [INFO] notifier: would notify: PV5: Charging — 180.0 kW • ETA 28 min
+```
+
+Pointing at real ntfy is the same command plus `NTFY_URL` and
+`NTFY_TOPIC`. See `proxy/README.md` → "Notifications".
+
 See [Controls](#controls) for what the buttons do.
 
 ## Production setup
@@ -140,16 +157,27 @@ scripted files under `proxy/scenarios/` — see `proxy/README.md` →
 in `.env` to talk to Kia instead. The demo source stays available for
 offline iteration.)
 
+**Pick a push topic** — any guess-hard string (the topic name is the
+only access control on a default ntfy install). Add to `.env`:
+
+```
+NTFY_TOPIC=kia-<something-random-here>
+NTFY_PUBLIC_URL=https://ntfy.example.com
+```
+
 **Run it** (still inside `pebble-kia/proxy`):
 
 ```sh
 docker compose up -d --build        # or: podman compose up -d --build
 docker logs -f pebble-kia-proxy     # sanity-check startup, Ctrl-C to detach
+docker logs -f pebble-kia-ntfy      # ntfy server in a second shell
 ```
 
-The compose file binds to `127.0.0.1:8000` on the host, so nothing is
-exposed on the public internet directly. Swap the bind for `0.0.0.0`
-only if you plan to skip the reverse proxy.
+The compose file brings up two services — the proxy on
+`127.0.0.1:8000` and ntfy on `127.0.0.1:2586`. Both are loopback-only;
+Caddy fronts both subdomains, so nothing is exposed to the public
+internet directly. Swap the binds for `0.0.0.0` only if you plan to
+skip the reverse proxy.
 
 **Sanity check** — from the host itself (still in `pebble-kia/proxy`):
 
@@ -161,18 +189,32 @@ TOKEN=$(grep ^PROXY_BEARER_TOKEN .env | cut -d= -f2)
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/vehicles | jq .
 ```
 
-**Add TLS via Caddy** — drop this into the Caddy config (see
-`proxy/Caddyfile.example`) and point DNS at the server:
+**Add TLS via Caddy** — drop these blocks into the Caddy config
+(see `proxy/Caddyfile.example`) and point DNS at the server:
 
 ```
 kia-proxy.example.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8000
 }
+
+ntfy.example.com {
+    reverse_proxy 127.0.0.1:2586 {
+        flush_interval -1
+    }
+}
 ```
 
-`caddy reload` and Caddy obtains a Let's Encrypt cert automatically. The
-public URL `https://kia-proxy.example.com` is what the phone will use.
+`caddy reload` and Caddy obtains Let's Encrypt certs automatically.
+The phone will subscribe to `https://ntfy.example.com/<your-topic>`
+for push notifications; the watchapp will call
+`https://kia-proxy.example.com` for data.
+
+**Subscribe the phone to ntfy** — install the ntfy app
+(<https://ntfy.sh/> has App Store / Play Store links), then add a
+subscription with the URL above. Phone OS notifications from the ntfy
+app bridge to the watch automatically via the Pebble mobile app's
+notification forwarding; no watchapp-side setup needed.
 
 ### 2. Build and install the watchapp
 
@@ -285,6 +327,13 @@ Clients re-fetch on the next request; no watch-side restart needed.
 - **`pebble install --phone` fails** — developer connection is
   disabled or the watch IP is wrong. Re-check Settings → Developer in
   the mobile app.
+- **No push notifications arriving** — subscribe to the topic from any
+  host first with `curl -sN https://ntfy.example.com/your-topic/json`
+  and trigger a transition (edit the scenario's `at_s` offsets or
+  force-refresh). If that works but the phone app doesn't buzz,
+  check the ntfy app's subscription URL and the phone's OS
+  notification permissions. If the proxy logs "would notify" without
+  trying the HTTP push, `NTFY_TOPIC` is unset — push is disabled.
 
 ## What's next
 

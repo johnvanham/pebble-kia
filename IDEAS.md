@@ -54,12 +54,11 @@ picking anything off this list:
   known ETA, push a pin via the Rebble timeline service so the watch
   shows "charge complete ~ 14:30" in its calendar view. Requires the
   companion to have timeline tokens; Rebble docs cover the API.
-- **Background / push notifications.** Today's notifications only fire
-  while the watchapp is open because PebbleKit JS can't run in the
-  background. To get "charge complete" alerts with the app closed, the
-  proxy needs to push — either via Rebble timeline pins (same
-  infrastructure as the bullet above) or a mobile-app-level webhook.
-  Natural follow-up once the live source lands in phase 3.
+- **Richer notification routing.** Today pushes go through a single
+  self-hosted ntfy topic that every subscribed device receives. Future
+  work: per-device topic selection in the phone UI (only care about
+  charge events on tablet, everything on phone), severity-tuned
+  vibrations, snoozable alerts.
 
 ## Configuration
 

@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 from .auth import verify_bearer
 from .cache import StatusCache
 from .config import Settings, load_settings
+from .detector import TransitionDetector
 from .models import StatusResponse, VehicleList
+from .notifier import Notifier, NtfyNotifier, NullNotifier
 from .sources.base import DataSource, VehicleNotFound
 from .sources.demo import DemoDataSource
 from .sources.live import LiveDataSource, LiveNotYetImplemented
@@ -21,6 +23,16 @@ def _build_source(settings: Settings) -> DataSource:
     raise RuntimeError(f"unknown DATA_SOURCE: {settings.data_source}")
 
 
+def _build_notifier(settings: Settings) -> Notifier:
+    if settings.ntfy_url and settings.ntfy_topic:
+        return NtfyNotifier(
+            settings.ntfy_url,
+            settings.ntfy_topic,
+            auth_token=settings.ntfy_auth_token or None,
+        )
+    return NullNotifier()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = load_settings()
@@ -32,7 +44,37 @@ async def lifespan(app: FastAPI):
         else settings.live_refresh_min_seconds
     )
     app.state.cache = StatusCache(cache_seconds)
-    yield
+    app.state.notifier = _build_notifier(settings)
+
+    # Kick off the transition detector against whatever vehicles the
+    # source currently knows about. If list_vehicles() raises (e.g.
+    # live source before bootstrap), we skip detection rather than
+    # refuse to start — the HTTP API still serves clients.
+    detector: TransitionDetector | None = None
+    try:
+        vehicles = app.state.source.list_vehicles()
+        nicknames = {v.id: v.nickname for v in vehicles}
+        detector = TransitionDetector(
+            source=app.state.source,
+            notifier=app.state.notifier,
+            vehicle_nicknames=nicknames,
+            interval_seconds=settings.detector_interval_seconds,
+        )
+        detector.start()
+    except Exception:
+        import logging
+        logging.getLogger("lifespan").warning(
+            "transition detector not started (source.list_vehicles failed)",
+            exc_info=True,
+        )
+    app.state.detector = detector
+
+    try:
+        yield
+    finally:
+        if detector is not None:
+            await detector.stop()
+        await app.state.notifier.close()
 
 
 app = FastAPI(title="pebble-kia-proxy", version="0.1.0", lifespan=lifespan)

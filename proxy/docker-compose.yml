@@ -4,11 +4,20 @@ services:
     image: pebble-kia-proxy:dev
     container_name: pebble-kia-proxy
     restart: unless-stopped
+    depends_on:
+      - ntfy
     environment:
       - PROXY_BEARER_TOKEN=${PROXY_BEARER_TOKEN:?set PROXY_BEARER_TOKEN in .env}
       - DATA_SOURCE=${DATA_SOURCE:-demo}
       - DEMO_DATA_FILE=/app/demo-data.json
       - LIVE_REFRESH_MIN_SECONDS=${LIVE_REFRESH_MIN_SECONDS:-600}
+      - DEMO_REFRESH_MIN_SECONDS=${DEMO_REFRESH_MIN_SECONDS:-5}
+      - DETECTOR_INTERVAL_SECONDS=${DETECTOR_INTERVAL_SECONDS:-20}
+      # Proxy reaches ntfy over the compose network. External clients
+      # (phone subscribers) go through Caddy at NTFY_PUBLIC_URL.
+      - NTFY_URL=${NTFY_URL:-http://ntfy:80}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
+      - NTFY_AUTH_TOKEN=${NTFY_AUTH_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       # Bind-mount the demo JSON so edits on the host are picked up by the
@@ -16,3 +25,25 @@ services:
       - ./demo-data.json:/app/demo-data.json:ro
     ports:
       - "127.0.0.1:8000:8000"
+
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: pebble-kia-ntfy
+    command: serve
+    restart: unless-stopped
+    environment:
+      - NTFY_BASE_URL=${NTFY_PUBLIC_URL:-http://localhost:2586}
+      - NTFY_LISTEN_HTTP=:80
+      - NTFY_CACHE_FILE=/var/lib/ntfy/cache.db
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_ATTACHMENT_CACHE_DIR=/var/lib/ntfy/attachments
+    volumes:
+      - ntfy-data:/var/lib/ntfy
+    ports:
+      # Loopback only — expose via Caddy to the internet so Let's
+      # Encrypt can cover TLS and the phone can subscribe from outside
+      # the LAN. See Caddyfile.example.
+      - "127.0.0.1:2586:80"
+
+volumes:
+  ntfy-data:

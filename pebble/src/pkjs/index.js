@@ -1,9 +1,11 @@
 // PebbleKit JS companion — runs inside the Pebble mobile app (or pypkjs
 // in the emulator). Translates AppMessage requests from the watch into
-// HTTP calls against the self-hosted proxy, and packs responses back.
-// Also polls the current vehicle while the watchapp is alive and fires
-// native Pebble notifications on state transitions (charge start/end,
-// lock/unlock, plug/unplug, climate on/off).
+// HTTP calls against the self-hosted proxy, packs responses back, and
+// keeps the watch UI live while the app is open.
+//
+// Notifications are driven from the proxy via ntfy + OS notification
+// bridging, NOT from here — that way pushes reach the watch even when
+// this companion isn't running. Keeping them here too would duplicate.
 
 var Clay = require('pebble-clay');
 var clayConfig = require('./config');
@@ -112,82 +114,7 @@ function statusMessage(vehicleId, data) {
   };
 }
 
-// --- Notification bookkeeping ----------------------------------------
-//
-// `prevStatus[id]` holds the last response we saw for a given vehicle
-// so we can detect transitions. `vehicleNames[id]` is the nickname for
-// the notification title. `currentVehicleId` is what the polling loop
-// auto-refreshes — it follows whichever vehicle the watch most recently
-// asked about, so switching vehicles with Up/Down immediately redirects
-// the poll. We only notify after the first observation for an id so a
-// fresh boot doesn't spam "charging started" for an already-charging car.
-
-var prevStatus = {};
-var vehicleNames = {};
 var currentVehicleId = null;
-
-function notify(title, body) {
-  log('notify: ' + title + ' — ' + body);
-  try {
-    Pebble.showSimpleNotificationOnPebble(title, body);
-  } catch (e) {
-    // Some runtimes expose the API under a different name; log and move on.
-    log('notify failed: ' + e.message);
-  }
-}
-
-function describePlug(code) {
-  if (code === 1) return 'AC';
-  if (code === 2) return 'DC';
-  return 'unplugged';
-}
-
-function formatDistanceKm(km) {
-  if (getConfig().unitMiles) {
-    // Match the watch-side integer conversion (units.c) so notification
-    // text and on-screen range agree.
-    return Math.floor((km * 1000 + 804) / 1609) + ' mi';
-  }
-  return km + ' km';
-}
-
-function detectTransitions(vehicleId, msg) {
-  var prev = prevStatus[vehicleId];
-  prevStatus[vehicleId] = msg;
-  if (!prev) return;  // first observation — establish baseline, don't notify
-
-  var name = vehicleNames[vehicleId] || vehicleId;
-
-  if (!prev.IS_CHARGING && msg.IS_CHARGING) {
-    var kw = (msg.CHARGE_KW_X10 / 10).toFixed(1);
-    var eta = msg.CHARGE_ETA_MIN > 0 ? ' • ETA ' + msg.CHARGE_ETA_MIN + ' min' : '';
-    notify(name + ': Charging', kw + ' kW' + eta);
-  } else if (prev.IS_CHARGING && !msg.IS_CHARGING) {
-    var done = msg.SOC_PCT >= 80 ? 'Charge complete' : 'Charging stopped';
-    notify(name + ': ' + done,
-           msg.SOC_PCT + '% • ' + formatDistanceKm(msg.RANGE_KM));
-  }
-
-  if (prev.PLUG !== msg.PLUG) {
-    if (prev.PLUG === 0 && msg.PLUG !== 0) {
-      notify(name + ': Plugged in', describePlug(msg.PLUG));
-    } else if (prev.PLUG !== 0 && msg.PLUG === 0) {
-      notify(name + ': Unplugged',
-             msg.SOC_PCT + '% • ' + formatDistanceKm(msg.RANGE_KM));
-    }
-  }
-
-  if (prev.DOORS_LOCKED !== msg.DOORS_LOCKED) {
-    notify(name + ': ' + (msg.DOORS_LOCKED ? 'Locked' : 'Unlocked'), '');
-  }
-
-  if (prev.IS_CLIMATE_ON !== msg.IS_CLIMATE_ON) {
-    var sub = msg.CABIN_TEMP_C + '°C cabin';
-    notify(name + ': Climate ' + (msg.IS_CLIMATE_ON ? 'on' : 'off'), sub);
-  }
-}
-
-// --- Request handlers ------------------------------------------------
 
 function handleListRequest() {
   httpGet('/vehicles', function (err, data) {
@@ -199,13 +126,11 @@ function handleListRequest() {
       VEHICLE_COUNT: vs.length,
       UNIT_MILES: getConfig().unitMiles ? 1 : 0
     };
-    vehicleNames = {};
     for (var i = 0; i < vs.length; i++) {
       var id = String(vs[i].id || '');
       var nick = String(vs[i].nickname || vs[i].model || id);
       out[mk.VEHICLE_ID + i] = id;
       out[mk.VEHICLE_NICK + i] = nick;
-      vehicleNames[id] = nick;
     }
     Pebble.sendAppMessage(out, null, function () {
       sendError('Watch inbox full');
@@ -213,19 +138,16 @@ function handleListRequest() {
   });
 }
 
-function fetchAndDispatch(vehicleId, force, onDone) {
+function fetchAndDispatch(vehicleId, force) {
   var go = force ? httpPost : httpGet;
   var path = force
     ? '/vehicles/' + encodeURIComponent(vehicleId) + '/refresh'
     : '/vehicles/' + encodeURIComponent(vehicleId) + '/status';
   go(path, function (err, data) {
-    if (err) { if (onDone) onDone(err); return sendError(err.message); }
-    var msg = statusMessage(vehicleId, data);
-    detectTransitions(vehicleId, msg);
-    Pebble.sendAppMessage(msg, null, function () {
+    if (err) return sendError(err.message);
+    Pebble.sendAppMessage(statusMessage(vehicleId, data), null, function () {
       sendError('Watch inbox full');
     });
-    if (onDone) onDone(null);
   });
 }
 
@@ -238,10 +160,9 @@ function handleStatusRequest(vehicleId, force) {
 // --- Polling loop ----------------------------------------------------
 //
 // Kicks off once on ready and then every POLL_MS while the companion is
-// alive. Only polls the current vehicle — polling all is overkill for
-// the demo and would increase battery drain on a real link. Error
-// handling in fetchAndDispatch already suppresses duplicate error
-// messages during a stretch of failures.
+// alive. Only polls the current vehicle and only updates the UI —
+// notifications come from the proxy's own detector via ntfy, so there
+// is no diff/notify logic here.
 
 var pollTimer = null;
 
