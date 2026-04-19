@@ -6,7 +6,10 @@ local client.
 
 Single-user. Open source but not run as a hosted service. See the
 repo-root `DESIGN.md` for architecture and the operating-assumption
-decisions that shaped it.
+decisions that shaped it, and the repo-root `README.md` for the full
+watch + companion + proxy setup flow. This file is the proxy-side
+depth reference — endpoint contract, environment variables, and
+local-dev iteration tips.
 
 ## Status
 

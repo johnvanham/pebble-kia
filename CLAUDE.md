@@ -72,23 +72,35 @@ Guardrails:
 
 ## Testing end-to-end in the emulator
 
-pypkjs stores `localStorage` in `~/.pebble-sdk/4.9.148/basalt/localstorage/<uuid>`
-as a `dbm.dumb` database (not `shelve`). To preload config so the
-emulator can talk to a local proxy without manually opening the webview:
+Interactive path: `pebble emu-app-config` opens the Clay config page in
+the host browser. Fill in URL + token, Save, and the emulator's
+localStorage picks up the values.
+
+Scripted path (for headless testing — no browser): pypkjs stores
+`localStorage` as a `dbm.dumb` database under
+`~/.pebble-sdk/*/basalt/localstorage/<uuid>`. The uuid-specific files
+are created the first time the app runs, so `pebble install --emulator
+basalt` must happen at least once before the preload. Then:
 
 ```sh
 python3 - <<'PY'
-import dbm.dumb, json
-db = dbm.dumb.open('/home/jvh/.pebble-sdk/4.9.148/basalt/localstorage/5b7e9a12-3c4d-4e8f-9a1b-2c3d4e5f6a7b', 'c')
-db['clay-settings'] = json.dumps({'PROXY_URL': 'http://localhost:8000', 'PROXY_TOKEN': 'testtoken123'})
+import dbm.dumb, json, pathlib
+uuid = '5b7e9a12-3c4d-4e8f-9a1b-2c3d4e5f6a7b'
+ls = next((pathlib.Path.home() / '.pebble-sdk').glob('*/basalt/localstorage'))
+db = dbm.dumb.open(str(ls / uuid), 'c')
+db['clay-settings'] = json.dumps({
+    'PROXY_URL': 'http://localhost:8000',
+    'PROXY_TOKEN': 'testtoken123',
+})
 db.close()
 PY
+pebble install --emulator basalt     # reinstall to reload localStorage
 ```
 
-Then start the proxy with a matching `PROXY_BEARER_TOKEN`, `pebble
-install --emulator basalt`, and watch `pebble logs --emulator basalt`.
-The companion prints `[kia] req …` lines and errors surface as `ERR`
-top-right on the watch.
+Start the proxy with a matching `PROXY_BEARER_TOKEN` and watch `pebble
+logs --emulator basalt`. The companion prints `[kia] req …` lines and
+errors surface as `ERR` top-right plus a readable message at the bottom
+of the main screen.
 
 Emulator button presses from the CLI:
 

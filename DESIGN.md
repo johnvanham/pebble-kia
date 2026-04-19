@@ -299,49 +299,11 @@ DESIGN.md         # this file
 README.md         # quickstart
 ```
 
-## Building and running the watchapp
+## Building and running
 
-Prerequisites: the Rebble Pebble SDK installed (`pebble` CLI on PATH). See
-https://developer.repebble.com/sdk/ for install instructions (Docker image,
-Homebrew, or manual).
-
-```sh
-cd pebble
-pebble build
-```
-
-Build artefacts land in `pebble/build/pebble-kia.pbw`.
-
-### Run in the emulator
-
-Any of the supported platforms:
-
-```sh
-pebble install --emulator basalt   # Pebble Time / Time Steel
-pebble install --emulator chalk    # Pebble Time Round
-pebble install --emulator diorite  # Pebble 2
-pebble install --emulator emery    # Pebble Time 2 (preview PT2 hardware)
-```
-
-### Install on a physical watch
-
-With the Pebble mobile app paired and developer mode enabled, find the watch's
-IP from the app (Developer → Pebble IP) and sideload:
-
-```sh
-pebble install --phone <WATCH_IP>
-```
-
-### Controls (demo mode)
-
-- **Up / Down** — switch between demo vehicles (PV5 Passenger, EV9 GT-Line).
-- **Select** — open the detail screen.
-- **Select (long press)** — simulate a refresh; vibrates briefly and nudges
-  the dummy values so the UI can be exercised.
-- **Back** — return to main screen / exit app.
-
-A `DEMO` badge is drawn in the top-right of the main screen so the source of
-the data is never in doubt while iterating.
+See `README.md` for the full build / emulator / install / configure
+flow. This file intentionally does not duplicate it, so only one place
+can drift out of date.
 
 ## Out of scope (for now)
 
