@@ -48,6 +48,21 @@ module.exports = [
     ]
   },
   {
+    type: 'section',
+    items: [
+      {
+        type: 'heading',
+        defaultValue: 'Display'
+      },
+      {
+        type: 'toggle',
+        messageKey: 'UNIT_MILES',
+        label: 'Show distances in miles',
+        defaultValue: true
+      }
+    ]
+  },
+  {
     type: 'submit',
     defaultValue: 'Save'
   }

@@ -33,7 +33,13 @@ function getConfig() {
   var token = settings.PROXY_TOKEN ||
               localStorage.getItem('proxy_token') ||
               '';
-  return { url: String(url).replace(/\/+$/, ''), token: String(token) };
+  var unitMiles = settings.UNIT_MILES;
+  if (unitMiles === undefined || unitMiles === null) unitMiles = true;
+  return {
+    url: String(url).replace(/\/+$/, ''),
+    token: String(token),
+    unitMiles: !!unitMiles
+  };
 }
 
 function sendError(msg) {
@@ -101,7 +107,8 @@ function statusMessage(vehicleId, data) {
     CABIN_TEMP_C: s.cabin_temp_c | 0,
     ODO_KM: s.odo_km | 0,
     IS_CLIMATE_ON: s.is_climate_on ? 1 : 0,
-    UPDATED_AT: parseIsoSeconds(s.updated_at)
+    UPDATED_AT: parseIsoSeconds(s.updated_at),
+    UNIT_MILES: getConfig().unitMiles ? 1 : 0
   };
 }
 
@@ -135,6 +142,15 @@ function describePlug(code) {
   return 'unplugged';
 }
 
+function formatDistanceKm(km) {
+  if (getConfig().unitMiles) {
+    // Match the watch-side integer conversion (units.c) so notification
+    // text and on-screen range agree.
+    return Math.floor((km * 1000 + 804) / 1609) + ' mi';
+  }
+  return km + ' km';
+}
+
 function detectTransitions(vehicleId, msg) {
   var prev = prevStatus[vehicleId];
   prevStatus[vehicleId] = msg;
@@ -148,14 +164,16 @@ function detectTransitions(vehicleId, msg) {
     notify(name + ': Charging', kw + ' kW' + eta);
   } else if (prev.IS_CHARGING && !msg.IS_CHARGING) {
     var done = msg.SOC_PCT >= 80 ? 'Charge complete' : 'Charging stopped';
-    notify(name + ': ' + done, msg.SOC_PCT + '% • ' + msg.RANGE_KM + ' km');
+    notify(name + ': ' + done,
+           msg.SOC_PCT + '% • ' + formatDistanceKm(msg.RANGE_KM));
   }
 
   if (prev.PLUG !== msg.PLUG) {
     if (prev.PLUG === 0 && msg.PLUG !== 0) {
       notify(name + ': Plugged in', describePlug(msg.PLUG));
     } else if (prev.PLUG !== 0 && msg.PLUG === 0) {
-      notify(name + ': Unplugged', msg.SOC_PCT + '% • ' + msg.RANGE_KM + ' km');
+      notify(name + ': Unplugged',
+             msg.SOC_PCT + '% • ' + formatDistanceKm(msg.RANGE_KM));
     }
   }
 
@@ -176,7 +194,11 @@ function handleListRequest() {
     if (err) return sendError(err.message);
     var vs = (data && data.vehicles) || [];
     if (vs.length > MAX_VEHICLES) vs = vs.slice(0, MAX_VEHICLES);
-    var out = { RESP_KIND: 'list', VEHICLE_COUNT: vs.length };
+    var out = {
+      RESP_KIND: 'list',
+      VEHICLE_COUNT: vs.length,
+      UNIT_MILES: getConfig().unitMiles ? 1 : 0
+    };
     vehicleNames = {};
     for (var i = 0; i < vs.length; i++) {
       var id = String(vs[i].id || '');

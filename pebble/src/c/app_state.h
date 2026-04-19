@@ -59,6 +59,8 @@ const Vehicle *app_state_current_vehicle(void);
 const Vehicle *app_state_vehicle_at(int idx);
 const char *app_state_error(void);
 bool app_state_is_busy(void);
+bool app_state_unit_miles(void);
+void app_state_set_unit_miles(bool v);
 
 void app_state_next_vehicle(void);
 void app_state_prev_vehicle(void);

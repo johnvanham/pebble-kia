@@ -87,6 +87,12 @@ static void handle_status(DictionaryIterator *in) {
 static void inbox_received(DictionaryIterator *in, void *ctx) {
   app_state_set_busy(false);
 
+  // Unit preference piggybacks on list + status messages; apply first
+  // so a config flip is visible immediately, even alongside an error
+  // reply that does nothing else useful.
+  Tuple *unit_t = dict_find(in, MESSAGE_KEY_UNIT_MILES);
+  if (unit_t) app_state_set_unit_miles(unit_t->value->uint8 != 0);
+
   Tuple *err_t = dict_find(in, MESSAGE_KEY_ERROR_MSG);
   if (err_t) {
     app_state_set_error(err_t->value->cstring);

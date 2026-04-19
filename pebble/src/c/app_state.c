@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "units.h"
+
 #define MAX_LISTENERS 4
 
 static Vehicle s_vehicles[MAX_VEHICLES];
@@ -9,6 +11,7 @@ static int s_vehicle_count = 0;
 static int s_current_index = 0;
 static AppPhase s_phase = APP_PHASE_LOADING_LIST;
 static bool s_busy = false;
+static bool s_unit_miles = PBK_USE_MILES_DEFAULT;  // companion's UNIT_MILES overrides
 static char s_error[APP_ERROR_LEN] = {0};
 
 static AppStateListener s_listeners[MAX_LISTENERS];
@@ -46,6 +49,14 @@ const char *app_state_error(void) {
 }
 
 bool app_state_is_busy(void) { return s_busy; }
+
+bool app_state_unit_miles(void) { return s_unit_miles; }
+
+void app_state_set_unit_miles(bool v) {
+  if (s_unit_miles == v) return;
+  s_unit_miles = v;
+  app_state_notify();
+}
 
 void app_state_next_vehicle(void) {
   if (s_vehicle_count <= 0) return;

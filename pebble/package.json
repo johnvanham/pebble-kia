@@ -42,6 +42,7 @@
       "ODO_KM",
       "IS_CLIMATE_ON",
       "UPDATED_AT",
+      "UNIT_MILES",
       "ERROR_MSG"
     ],
     "resources": {
