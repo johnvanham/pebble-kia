@@ -16,12 +16,16 @@ The phone companion is a no-op stub and the proxy hasn't been built yet.
 See [`DESIGN.md`](./DESIGN.md) for architecture, phased plan, operating
 assumptions, and the decision record around proxy vs. direct mode.
 
-| Component              | Status                                           |
-| ---------------------- | ------------------------------------------------ |
-| Pebble watchapp (C)    | Phase 1 — runs with dummy data                   |
-| PebbleKit JS companion | No-op stub                                       |
-| Self-hosted proxy      | Phase 2 — FastAPI skeleton, demo data source     |
-| HA / dashboard clients | Future                                           |
+| Component              | Status                                                     |
+| ---------------------- | ---------------------------------------------------------- |
+| Pebble watchapp (C)    | Fetches vehicle list + status from the companion           |
+| PebbleKit JS companion | Clay config page; calls the proxy and packs AppMessage     |
+| Self-hosted proxy      | FastAPI, demo data source, in-memory cache + rate limit    |
+| HA / dashboard clients | Future                                                     |
+
+End-to-end demo mode runs today: edit `proxy/demo-data.json`, long-press
+SELECT on the watch, the proxy re-reads the file and the new values
+render. Live Kia integration (phase 3) is not wired up yet.
 
 ## Repo layout
 
@@ -75,6 +79,24 @@ pebble install --emulator emery     # Time 2
 
 `pebble logs --emulator <platform>` tails `APP_LOG` output.
 
+## Configure the proxy connection
+
+The watchapp has no fallback state — it renders whatever the companion
+reports. Before it can show anything useful, point the companion at a
+running proxy:
+
+1. Start the proxy locally (`cd proxy && PROXY_BEARER_TOKEN=… uv run
+   uvicorn app.main:app`) or install the Docker image on your home
+   server behind Caddy.
+2. On the phone, open the Pebble mobile app → locker → Kia → Settings.
+   Enter the proxy URL and bearer token in the Clay config page and
+   save. Values persist in the companion's `localStorage`.
+
+For emulator testing, the companion defaults to `http://localhost:8000`
+with an empty token, and `pebble install --emulator basalt` works out of
+the box as long as the proxy is reachable on that URL with the expected
+token. See `proxy/README.md` for the proxy-side quickstart.
+
 ## Install on a physical watch
 
 Pair the watch in the official Pebble mobile app, then enable the
@@ -88,17 +110,23 @@ The app is small and well within the basalt heap budget, so an existing
 Pebble Time should run it fine; the same bundle will run unmodified on
 Pebble Time 2 once it ships.
 
-## Controls (demo mode)
+## Controls
 
-- **Up / Down** — switch between demo vehicles (PV5 Passenger, EV9 GT-Line).
+- **Up / Down** — switch between vehicles returned by the proxy. If the
+  newly-selected vehicle has no cached status yet, the watch asks the
+  companion to fetch it.
 - **Select** — open the detail screen (odometer, cabin temp, doors,
   charge rate, ETA).
-- **Select (long press)** — simulate a refresh: short vibration, then the
-  dummy numbers nudge so you can see the UI react.
+- **Select (long press)** — force refresh the current vehicle (POSTs
+  `/vehicles/{id}/refresh`, short vibration, ERR in the corner if the
+  phone link or proxy is down).
 - **Back** — return to the main screen or exit the app.
 
-A `DEMO` badge is drawn top-right on the main screen so it's never
-ambiguous that the values are fake.
+The watch renders a `...` indicator top-right while a request is in
+flight, and `ERR` with an error line when the companion reports a
+failure (bad config, timeout, non-2xx). Nothing is rendered from
+compiled state — if the companion never responds, the watch sits on a
+"Connecting…" screen.
 
 ## Display units
 
@@ -113,11 +141,10 @@ configuration is deferred until phase 5.
 The phased plan lives in `DESIGN.md`. Short version:
 
 1. Watchapp with demo data ← **done**
-2. FastAPI proxy skeleton (demo data source, auth, caching) ← **in progress**
+2. FastAPI proxy skeleton + companion/watch wiring against it ← **done**
 3. Proxy wired to `hyundai_kia_connect_api` with SQLite persistence
-4. End-to-end: companion calls proxy, watch renders real data
-5. Detail + vehicle picker polish, configuration UI
-6. PV5-specific payload validation once the vehicle is on the account
+4. Detail + vehicle picker polish, configuration UX improvements
+5. PV5-specific payload validation once the vehicle is on the account
 
 This README will grow as each phase lands.
 

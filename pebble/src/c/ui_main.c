@@ -3,7 +3,7 @@
 #include <pebble.h>
 
 #include "app_state.h"
-#include "demo_data.h"
+#include "ipc.h"
 #include "ui_detail.h"
 #include "units.h"
 
@@ -11,6 +11,10 @@ static Window *s_window;
 static Layer *s_canvas;
 
 static void format_ago(time_t when, char *out, size_t out_len) {
+  if (when == 0) {
+    snprintf(out, out_len, "--");
+    return;
+  }
   time_t now = time(NULL);
   int secs = (int)(now - when);
   if (secs < 0) secs = 0;
@@ -42,11 +46,10 @@ static void draw_battery(GContext *ctx, GRect r, uint8_t soc_pct,
   graphics_context_set_fill_color(ctx, GColorWhite);
 #endif
   graphics_context_set_stroke_color(ctx, GColorWhite);
-
   graphics_draw_rect(ctx, r);
 
-  GRect nub = GRect(r.origin.x + r.size.w, r.origin.y + r.size.h / 4,
-                    3, r.size.h / 2);
+  GRect nub = GRect(r.origin.x + r.size.w, r.origin.y + r.size.h / 4, 3,
+                    r.size.h / 2);
   graphics_fill_rect(ctx, nub, 0, GCornerNone);
 
   int inner_w = r.size.w - 4;
@@ -55,32 +58,68 @@ static void draw_battery(GContext *ctx, GRect r, uint8_t soc_pct,
   graphics_fill_rect(ctx, fill_r, 0, GCornerNone);
 }
 
+static void draw_centered_message(GContext *ctx, GRect b, const char *title,
+                                  const char *sub) {
+  GFont tf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  GFont sf = fonts_get_system_font(FONT_KEY_GOTHIC_18);
+  int y = b.size.h / 2 - 30;
+  GRect tr = GRect(8, y, b.size.w - 16, 28);
+  graphics_draw_text(ctx, title, tf, tr, GTextOverflowModeWordWrap,
+                     GTextAlignmentCenter, NULL);
+  if (sub && sub[0]) {
+    GRect sr = GRect(8, y + 30, b.size.w - 16, b.size.h - y - 34);
+    graphics_draw_text(ctx, sub, sf, sr, GTextOverflowModeWordWrap,
+                       GTextAlignmentCenter, NULL);
+  }
+}
+
 static void canvas_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
-  const Vehicle *v = app_state_current_vehicle();
-  if (!v) return;
-
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, b, 0, GCornerNone);
   graphics_context_set_text_color(ctx, GColorWhite);
 
+  const char *error = app_state_error();
+
+  if (app_state_phase() == APP_PHASE_LOADING_LIST) {
+    draw_centered_message(ctx, b, "Connecting...",
+                          error ? error : "Fetching vehicle list");
+    return;
+  }
+
+  if (app_state_vehicle_count() == 0) {
+    draw_centered_message(ctx, b, "No vehicles",
+                          "Open the Pebble app to configure the proxy.");
+    return;
+  }
+
+  const Vehicle *v = app_state_current_vehicle();
+  if (!v) return;
+
   // --- Name (top) ---
   GFont name_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
   GRect name_rect = GRect(0, 2, b.size.w, 22);
-  graphics_draw_text(ctx, v->name, name_font, name_rect,
+  graphics_draw_text(ctx, v->nickname, name_font, name_rect,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
-  // --- DEMO badge (top-right) ---
-  GFont demo_font = fonts_get_system_font(FONT_KEY_GOTHIC_14);
+  // --- Busy/error indicator (top-right) ---
+  if (app_state_is_busy() || error) {
+    GFont ind_font = fonts_get_system_font(FONT_KEY_GOTHIC_14);
 #ifdef PBL_COLOR
-  graphics_context_set_text_color(ctx, GColorChromeYellow);
+    graphics_context_set_text_color(ctx, error ? GColorFolly : GColorChromeYellow);
 #endif
-  GRect demo_rect = GRect(b.size.w - 44, 4, 40, 16);
-  graphics_draw_text(ctx, "DEMO", demo_font, demo_rect,
-                     GTextOverflowModeTrailingEllipsis, GTextAlignmentRight,
-                     NULL);
-  graphics_context_set_text_color(ctx, GColorWhite);
+    GRect ind_rect = GRect(b.size.w - 48, 4, 44, 16);
+    graphics_draw_text(ctx, error ? "ERR" : "...", ind_font, ind_rect,
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight,
+                       NULL);
+    graphics_context_set_text_color(ctx, GColorWhite);
+  }
+
+  if (!v->have_status) {
+    draw_centered_message(ctx, b, v->nickname, error ? error : "Loading...");
+    return;
+  }
 
   // --- Big SoC number ---
   GFont soc_font = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
@@ -127,22 +166,33 @@ static void on_state_changed(void) {
   if (s_canvas) layer_mark_dirty(s_canvas);
 }
 
+static void maybe_request_current_status(void) {
+  const Vehicle *v = app_state_current_vehicle();
+  if (v && !v->have_status) ipc_request_status(v->id, false);
+}
+
 static void up_click(ClickRecognizerRef ref, void *ctx) {
   app_state_prev_vehicle();
+  maybe_request_current_status();
 }
 
 static void down_click(ClickRecognizerRef ref, void *ctx) {
   app_state_next_vehicle();
+  maybe_request_current_status();
 }
 
 static void select_click(ClickRecognizerRef ref, void *ctx) {
-  ui_detail_push();
+  if (app_state_current_vehicle()) ui_detail_push();
 }
 
 static void select_long_click(ClickRecognizerRef ref, void *ctx) {
-  demo_data_simulate_refresh(app_state_current_index());
+  const Vehicle *v = app_state_current_vehicle();
+  if (!v) {
+    ipc_request_list();
+    return;
+  }
   vibes_short_pulse();
-  app_state_notify();
+  ipc_request_status(v->id, true);
 }
 
 static void click_config(void *context) {

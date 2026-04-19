@@ -16,12 +16,13 @@ deliberate — don't re-litigate it without being asked.
 
 ## Current phase
 
-Phase 1 done: watchapp runs against an on-device demo data module
-(`pebble/src/c/demo_data.c`). Phase 2 under way: FastAPI proxy
-(`proxy/`) with a pluggable data-source layer. Only the `demo` source
-exists today (reads an editable `proxy/demo-data.json`); the `live`
-source is a 501 stub, implemented in phase 3. The watch and companion
-do not yet talk to the proxy — that's the remainder of phase 2.
+Phase 2 done: watch → companion → proxy wiring is in place end-to-end
+against the demo data source. Watch no longer has compiled-in demo data;
+the companion's Clay config page (`pebble/src/pkjs/config.js`) holds
+proxy URL + bearer token in `localStorage['clay-settings']`. The proxy
+(`proxy/`) has a pluggable data-source layer — the `demo` source reads
+an editable `proxy/demo-data.json`; the `live` source is a 501 stub
+until phase 3 wires up `hyundai_kia_connect_api`.
 
 Status table at the top of `README.md` reflects current state; update it
 as phases land.
@@ -68,6 +69,30 @@ Guardrails:
   binary is the `podman-docker` shim). Dockerfiles work unchanged;
   `docker compose` is alias for `podman compose`. Watch for SELinux
   label issues on bind mounts (`:z` / `:Z`).
+
+## Testing end-to-end in the emulator
+
+pypkjs stores `localStorage` in `~/.pebble-sdk/4.9.148/basalt/localstorage/<uuid>`
+as a `dbm.dumb` database (not `shelve`). To preload config so the
+emulator can talk to a local proxy without manually opening the webview:
+
+```sh
+python3 - <<'PY'
+import dbm.dumb, json
+db = dbm.dumb.open('/home/jvh/.pebble-sdk/4.9.148/basalt/localstorage/5b7e9a12-3c4d-4e8f-9a1b-2c3d4e5f6a7b', 'c')
+db['clay-settings'] = json.dumps({'PROXY_URL': 'http://localhost:8000', 'PROXY_TOKEN': 'testtoken123'})
+db.close()
+PY
+```
+
+Then start the proxy with a matching `PROXY_BEARER_TOKEN`, `pebble
+install --emulator basalt`, and watch `pebble logs --emulator basalt`.
+The companion prints `[kia] req …` lines and errors surface as `ERR`
+top-right on the watch.
+
+Known quirk: `pebble emu-button` is currently broken under Python 3.13
+(argparse regression in pebble-tool). Use the on-screen emulator buttons
+or `pebble emu-control` instead.
 
 ## Working on the watchapp
 

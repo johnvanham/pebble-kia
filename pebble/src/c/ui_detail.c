@@ -3,7 +3,6 @@
 #include <pebble.h>
 
 #include "app_state.h"
-#include "demo_data.h"
 #include "units.h"
 
 static Window *s_window;
@@ -33,19 +32,24 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   graphics_fill_rect(ctx, b, 0, GCornerNone);
   graphics_context_set_text_color(ctx, GColorWhite);
 
-  // Title
   GFont title_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
   GRect title_rect = GRect(0, 2, b.size.w, 22);
-  graphics_draw_text(ctx, v->name, title_font, title_rect,
+  graphics_draw_text(ctx, v->nickname, title_font, title_rect,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
-  // Rows
+  if (!v->have_status) {
+    GFont body = fonts_get_system_font(FONT_KEY_GOTHIC_18);
+    GRect r = GRect(8, 60, b.size.w - 16, 80);
+    graphics_draw_text(ctx, "No data yet.", body, r, GTextOverflowModeWordWrap,
+                       GTextAlignmentCenter, NULL);
+    return;
+  }
+
   int y = 28;
   int row_h = 22;
   int padding_x = 10;
   int row_w = b.size.w - padding_x * 2;
-
   char buf[24];
 
   format_distance_km(v->odo_km, buf, sizeof(buf));

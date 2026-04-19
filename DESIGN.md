@@ -173,23 +173,44 @@ between them is a config change with no wire-format impact. Clients
 
 ## Data model
 
-AppMessage dictionary (watch ↔ JS), kept small to fit Pebble's outbox size:
+AppMessage dictionary (watch ↔ JS), kept small to fit Pebble's outbox
+size. Request and response keys share the same dictionary — the
+`REQ_KIND` / `RESP_KIND` discriminator tells each side which fields are
+meaningful.
 
-| Key               | Type    | Notes                                  |
-|-------------------|---------|----------------------------------------|
-| `MSG_TYPE`        | uint8   | 1=request status, 2=status response    |
-| `VEHICLE_ID`      | string  | Opaque id from proxy                   |
-| `SOC_PCT`         | uint8   | 0–100                                  |
-| `RANGE_KM`        | uint16  | Estimated range                        |
-| `IS_CHARGING`     | bool    |                                        |
-| `CHARGE_KW`       | uint16  | x10 to keep 1 decimal without floats   |
-| `CHARGE_ETA_MIN`  | uint16  | Minutes to target SoC                  |
-| `PLUG_STATE`      | uint8   | 0=unplugged, 1=AC, 2=DC                |
-| `DOORS_LOCKED`    | bool    |                                        |
-| `CABIN_TEMP_C`    | int8    |                                        |
-| `ODO_KM`          | uint32  |                                        |
-| `UPDATED_AT`      | uint32  | Unix epoch seconds                     |
-| `ERROR`           | string  | Populated on failure                   |
+Watch → companion (requests):
+
+| Key         | Type   | Notes                                               |
+|-------------|--------|-----------------------------------------------------|
+| `REQ_KIND`  | string | `list` \| `status` \| `refresh`                     |
+| `REQ_ID`    | string | Vehicle id (status/refresh only)                    |
+
+Companion → watch (responses):
+
+| Key             | Type    | Notes                                                |
+|-----------------|---------|------------------------------------------------------|
+| `RESP_KIND`     | string  | `ready` (startup nudge) \| `list` \| `status` \| `error` |
+| `VEHICLE_COUNT` | uint8   | list response                                        |
+| `VEHICLE_ID[N]` | string  | list response (N slots, `MAX_VEHICLES` = 4)          |
+| `VEHICLE_NICK[N]`| string | list response (display name)                        |
+| `STATUS_ID`     | string  | status response (which vehicle this is for)          |
+| `SOC_PCT`       | uint8   | 0–100                                                |
+| `RANGE_KM`      | uint16  | Estimated range (km — wire format stays metric)      |
+| `IS_CHARGING`   | bool    |                                                      |
+| `CHARGE_KW_X10` | uint16  | Charge rate × 10 to carry 1 decimal without floats   |
+| `CHARGE_ETA_MIN`| uint16  | Minutes to target SoC                                |
+| `PLUG`          | uint8   | 0=unplugged, 1=AC, 2=DC                              |
+| `DOORS_LOCKED`  | bool    |                                                      |
+| `CABIN_TEMP_C`  | int8    |                                                      |
+| `ODO_KM`        | uint32  |                                                      |
+| `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
+| `ERROR_MSG`     | string  | Populated on failure; watch surfaces it in the UI    |
+
+Startup race: the companion emits `RESP_KIND=ready` when it comes
+online, and the watch kicks off the initial `list` request in response
+to any inbox message. This avoids the window where the watch would
+otherwise send before pypkjs (or the mobile app's JS runtime) has
+attached.
 
 All distances stay in km end-to-end (Kia → proxy → companion → watch). Unit
 conversion is a display-only concern on the watch (see "Display units"
@@ -220,25 +241,26 @@ server); the list below reflects the path actually taken.
 
 1. **Watchapp with compiled demo data.** C scaffolding, package.json,
    on-device dummy data module, emulator build working. **Done.**
-2. **Proxy skeleton with demo data source.** FastAPI app, bearer auth,
-   in-memory cache with rate limit, pluggable data-source layer. Ships
-   with a `demo` source that reads `demo-data.json`; the `live` source
-   is a stub that returns 501. Dockerfile + compose + Caddyfile snippet.
-   **In progress.**
+2. **Proxy skeleton + end-to-end wiring against demo.** FastAPI app with
+   bearer auth, in-memory cache with rate limit, pluggable data-source
+   layer (`demo` reads `demo-data.json`; `live` is a 501 stub).
+   Dockerfile + compose + Caddyfile snippet. PebbleKit JS companion
+   with a Clay configuration page (proxy URL + token) that calls the
+   proxy. Watch fetches the vehicle list and per-vehicle status over
+   AppMessage — no compiled fallback; loading and error states rendered
+   in the UI. **Done.**
 3. **Proxy wired to Kia.** Implement the `live` source on top of
    `hyundai_kia_connect_api`, document the one-time Selenium bootstrap,
    add SQLite persistence so cached state survives restarts.
-4. **End-to-end.** PebbleKit JS companion calls the proxy; watch renders
-   main screen from whatever the proxy returns (demo or live); persist
-   last-known state on the watch so boot shows data immediately.
-5. **Detail + picker screens polish, Clay configuration UI** for proxy
-   URL, bearer token, and units preference.
-6. **PV5-specific validation.** Once a PV5 is on the account, inspect
+4. **Detail + picker screens polish, configuration UX improvements**
+   (status-line error detail, last-update indicator, unit toggle in
+   Clay, persist last-known state on the watch for instant boot).
+5. **PV5-specific validation.** Once a PV5 is on the account, inspect
    the real `ccs2/carstatus/latest` payload, patch the proxy's vehicle
    adapter, confirm field mappings (the PV5 is new enough that the
    community library may not yet normalise every field correctly).
 
-Phases 1–5 can be built against an EV6/EV9 today; phase 6 is the
+Phases 1–4 can be built against an EV6/EV9 today; phase 5 is the
 PV5-specific pass once the vehicle is delivered.
 
 ## Risks and open questions
