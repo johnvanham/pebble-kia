@@ -90,9 +90,19 @@ install --emulator basalt`, and watch `pebble logs --emulator basalt`.
 The companion prints `[kia] req …` lines and errors surface as `ERR`
 top-right on the watch.
 
-Known quirk: `pebble emu-button` is currently broken under Python 3.13
-(argparse regression in pebble-tool). Use the on-screen emulator buttons
-or `pebble emu-control` instead.
+Emulator button presses from the CLI:
+
+```sh
+pebble emu-button click select              # tap
+pebble emu-button click select --duration 700   # long press (≥500ms)
+pebble emu-button click down
+```
+
+`pebble emu-button --help` and `pebble emu-button` (no args) crash with a
+Python-3.13 argparse regression (`ValueError: empty group ...`). The
+command itself works; only the usage-printing path is broken. Pass a
+valid `action` plus at least one button and it's fine. Valid actions are
+`click`, `push` (hold), `release`.
 
 ## Working on the watchapp
 

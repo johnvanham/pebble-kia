@@ -149,13 +149,22 @@ static void canvas_update(Layer *layer, GContext *ctx) {
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
-  // --- Status row (bottom) ---
+  // --- Status row (bottom). Error text replaces the normal line so the
+  // user can actually read what went wrong without digging through logs.
   GFont status_font = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
-  char status_buf[48];
-  char ago_buf[16];
-  format_ago(v->updated_at, ago_buf, sizeof(ago_buf));
-  snprintf(status_buf, sizeof(status_buf), "%s  %s  %s", plug_label(v->plug),
-           v->doors_locked ? "LOCK" : "OPEN", ago_buf);
+  char status_buf[APP_ERROR_LEN];
+  if (error) {
+#ifdef PBL_COLOR
+    graphics_context_set_text_color(ctx, GColorFolly);
+#endif
+    strncpy(status_buf, error, sizeof(status_buf) - 1);
+    status_buf[sizeof(status_buf) - 1] = 0;
+  } else {
+    char ago_buf[16];
+    format_ago(v->updated_at, ago_buf, sizeof(ago_buf));
+    snprintf(status_buf, sizeof(status_buf), "%s  %s  %s", plug_label(v->plug),
+             v->doors_locked ? "LOCK" : "OPEN", ago_buf);
+  }
   GRect status_rect = GRect(0, b.size.h - 20, b.size.w, 18);
   graphics_draw_text(ctx, status_buf, status_font, status_rect,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,

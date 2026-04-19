@@ -37,24 +37,41 @@ function sendError(msg) {
   Pebble.sendAppMessage({ RESP_KIND: 'error', ERROR_MSG: msg });
 }
 
+function friendlyHttpError(status) {
+  if (status === 401) return 'Bad proxy token';
+  if (status === 403) return 'Proxy forbidden';
+  if (status === 404) return 'Vehicle not found';
+  if (status === 501) return 'Live mode not ready';
+  if (status >= 500)  return 'Proxy error ' + status;
+  if (status >= 400)  return 'Request rejected ' + status;
+  return 'HTTP ' + status;
+}
+
 function httpCall(method, path, cb) {
   var cfg = getConfig();
-  if (!cfg.url) return cb(new Error('proxy URL not configured'));
+  if (!cfg.url || !cfg.token) {
+    return cb(new Error('Open Settings to configure proxy'));
+  }
   var req = new XMLHttpRequest();
   req.open(method, cfg.url + path, true);
-  if (cfg.token) req.setRequestHeader('Authorization', 'Bearer ' + cfg.token);
+  req.setRequestHeader('Authorization', 'Bearer ' + cfg.token);
   req.timeout = 15000;
-  req.onload = function () {
+  var timedOut = false;
+  req.ontimeout = function () { timedOut = true; };
+  // pypkjs does not fire `onerror` for connection failures — only `loadend`
+  // is reliable. Centralise the outcome classification here so this code
+  // works both on the mobile app's XHR and the emulator's shim.
+  req.onloadend = function () {
+    if (timedOut) return cb(new Error('Proxy timed out'));
+    if (req.status === 0) return cb(new Error("Can't reach proxy"));
     if (req.status >= 200 && req.status < 300) {
       try { return cb(null, JSON.parse(req.responseText)); }
-      catch (e) { return cb(new Error('bad JSON')); }
+      catch (e) { return cb(new Error('Bad proxy reply')); }
     }
-    cb(new Error('HTTP ' + req.status));
+    cb(new Error(friendlyHttpError(req.status)));
   };
-  req.onerror = function () { cb(new Error('network error')); };
-  req.ontimeout = function () { cb(new Error('timeout')); };
   try { req.send(); }
-  catch (e) { cb(new Error(e.message)); }
+  catch (e) { cb(new Error("Can't reach proxy")); }
 }
 
 function httpGet(path, cb)  { httpCall('GET', path, cb); }
@@ -79,7 +96,7 @@ function handleListRequest() {
       out[mk.VEHICLE_NICK + i] = String(vs[i].nickname || vs[i].model || vs[i].id || '');
     }
     Pebble.sendAppMessage(out, null, function () {
-      sendError('watch rejected vehicle list');
+      sendError('Watch inbox full');
     });
   });
 }
@@ -103,7 +120,7 @@ function statusMessage(vehicleId, data) {
 }
 
 function handleStatusRequest(vehicleId, force) {
-  if (!vehicleId) return sendError('missing vehicle id');
+  if (!vehicleId) return sendError('No vehicle selected');
   var go = force ? httpPost : httpGet;
   var path = force
     ? '/vehicles/' + encodeURIComponent(vehicleId) + '/refresh'
@@ -111,7 +128,7 @@ function handleStatusRequest(vehicleId, force) {
   go(path, function (err, data) {
     if (err) return sendError(err.message);
     Pebble.sendAppMessage(statusMessage(vehicleId, data), null, function () {
-      sendError('watch rejected status');
+      sendError('Watch inbox full');
     });
   });
 }
@@ -133,7 +150,7 @@ Pebble.addEventListener('appmessage', function (e) {
   if (kind === 'list') return handleListRequest();
   if (kind === 'status') return handleStatusRequest(id, false);
   if (kind === 'refresh') return handleStatusRequest(id, true);
-  sendError('unknown REQ_KIND: ' + kind);
+  sendError('Bad request from watch');
 });
 
 Pebble.addEventListener('showConfiguration', function () {

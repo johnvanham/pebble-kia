@@ -50,6 +50,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   http://localhost:8000/vehicles/pv5-demo/status | jq .
 ```
 
+`updated_at` in the demo JSON may be an absolute ISO 8601 string, a
+relative offset like `"-2m"` / `"-90s"` / `"-1h"` / `"-3d"`, or `null`
+(shorthand for "just now"). Relative offsets are resolved at fetch time
+so a hand-edited file stays fresh no matter when it was last saved —
+useful because the watch's "updated Xm ago" line gets stale fast
+otherwise.
+
 Edit `demo-data.json`, then:
 
 ```sh

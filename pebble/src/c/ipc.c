@@ -5,11 +5,16 @@
 #include "app_state.h"
 
 static void send_request(const char *kind, const char *id) {
+  // Clear any previous error optimistically — if this send (or the reply)
+  // fails, the error will be re-set. Without this, a stale error hides
+  // the busy indicator on retry and the user can't tell the retry fired.
+  app_state_clear_error();
+
   DictionaryIterator *out;
   AppMessageResult r = app_message_outbox_begin(&out);
   if (r != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "outbox_begin failed: %d", (int)r);
-    app_state_set_error("phone link busy");
+    app_state_set_error("Phone link busy");
     return;
   }
   dict_write_cstring(out, MESSAGE_KEY_REQ_KIND, kind);
@@ -17,7 +22,7 @@ static void send_request(const char *kind, const char *id) {
   r = app_message_outbox_send();
   if (r != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "outbox_send failed: %d", (int)r);
-    app_state_set_error("phone link busy");
+    app_state_set_error("Phone link busy");
     return;
   }
   app_state_set_busy(true);
@@ -103,14 +108,14 @@ static void inbox_received(DictionaryIterator *in, void *ctx) {
 static void inbox_dropped(AppMessageResult reason, void *ctx) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "inbox dropped: %d", (int)reason);
   app_state_set_busy(false);
-  app_state_set_error("message dropped");
+  app_state_set_error("Reply dropped");
 }
 
 static void outbox_failed(DictionaryIterator *it, AppMessageResult reason,
                           void *ctx) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "outbox failed: %d", (int)reason);
   app_state_set_busy(false);
-  app_state_set_error("send failed");
+  app_state_set_error("Phone unreachable");
 }
 
 static void outbox_sent(DictionaryIterator *it, void *ctx) {

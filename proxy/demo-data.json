@@ -15,7 +15,7 @@
         "doors_locked": true,
         "cabin_temp_c": 18,
         "odo_km": 3421,
-        "updated_at": "2026-04-18T10:00:00Z"
+        "updated_at": "-2m"
       }
     },
     {
@@ -33,7 +33,7 @@
         "doors_locked": true,
         "cabin_temp_c": 16,
         "odo_km": 18734,
-        "updated_at": "2026-04-18T09:45:00Z"
+        "updated_at": "-17m"
       }
     }
   ]
