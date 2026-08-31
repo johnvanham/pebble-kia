@@ -14,15 +14,19 @@ as a hosted service.
 | ---------------------- | ---------------------------------------------------------- |
 | Pebble watchapp (C)    | Fetches vehicle list + status; spinner, live-ticking ago   |
 | PebbleKit JS companion | Clay config page (proxy URL, token, miles/km toggle)       |
-| Self-hosted proxy      | FastAPI, demo data source, cache + rate limit              |
+| Self-hosted proxy      | FastAPI, `demo` + `live` sources, cache + rate limit       |
 | Scenario engine        | Time-evolving demos under `proxy/scenarios/`               |
 | Push notifications     | Proxy detector → ntfy (self-hosted) → phone/watch          |
-| Live Kia integration   | Not built yet — proxy has a `demo` source only             |
+| Live Kia integration   | Real Kia Connect data; SQLite-persisted token and state    |
 | HA / dashboard clients | Future                                                     |
 
-End-to-end demo mode runs today: pick a scenario, the proxy replays
-charge curves / lock cycles / climate on/off, pushes arrive on the
-phone (and bridge to the watch) as standard OS notifications.
+Set `DATA_SOURCE=live` and the proxy serves the real vehicle. Demo mode
+still runs end to end for offline iteration: pick a scenario, the proxy
+replays charge curves / lock cycles / climate on/off, pushes arrive on
+the phone (and bridge to the watch) as standard OS notifications.
+
+The layout is tuned for the Pebble Time 2 (`emery`); basalt, diorite
+and chalk also build.
 
 See [`DESIGN.md`](./DESIGN.md) for architecture, phased plan, operating
 assumptions, and the decision record around proxy vs. direct mode.
@@ -153,9 +157,33 @@ offsets so a hand-edited file stays fresh. For a time-evolving demo
 (charging curves, lock/unlock cycles, climate events firing
 notifications on the watch), point `DEMO_DATA_FILE` at one of the
 scripted files under `proxy/scenarios/` — see `proxy/README.md` →
-"Scenario mode". (When phase 3 lands, you can set `DATA_SOURCE=live`
-in `.env` to talk to Kia instead. The demo source stays available for
-offline iteration.)
+"Scenario mode".
+
+**Or go live** — set `DATA_SOURCE=live` and add your Kia account to
+`.env`:
+
+```
+DATA_SOURCE=live
+KIA_USERNAME=you@example.com
+KIA_PASSWORD=...
+KIA_PIN=
+KIA_REGION=1     # 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
+KIA_BRAND=1      # 1=Kia, 2=Hyundai, 3=Genesis
+```
+
+Same credentials as the official app — there is no browser bootstrap or
+token capture step. Accept any outstanding consent prompt in the Kia app
+first, or the first login fails. The refresh token is then cached in
+SQLite (`PROXY_STATE_DB`) so restarts don't re-login; the password is
+never written there.
+
+Two rate limits apply, and they are not the same thing.
+`LIVE_REFRESH_MIN_SECONDS` (600) bounds ordinary reads, which take the
+state Kia already holds and leave the car asleep.
+`LIVE_FORCE_MIN_SECONDS` (900) bounds the long-press refresh, which
+wakes the car and draws on its 12V battery. A long-press inside that
+window quietly returns cached data with `forced: false` rather than an
+error.
 
 **Pick a push topic** — any guess-hard string (the topic name is the
 only access control on a default ntfy install). Add to `.env`:
@@ -317,9 +345,23 @@ Clients re-fetch on the next request; no watch-side restart needed.
 - **Watch shows `Bad proxy token`** — the token in Clay config doesn't
   match `PROXY_BEARER_TOKEN` in `proxy/.env`. Paste both from the same
   source to rule out whitespace.
-- **Watch shows `Live mode not ready`** — the proxy is running with
-  `DATA_SOURCE=live`, which isn't implemented yet. Set
-  `DATA_SOURCE=demo` (or unset it) and restart the container.
+- **Watch shows `Kia needs consent`** — open the official Kia app and
+  accept the outstanding consent/terms screen, then retry. The proxy
+  can't clear this for you.
+- **Watch shows `Kia login failed`** — `KIA_USERNAME` / `KIA_PASSWORD`
+  don't work. Confirm them in the official app first. If they work
+  there but not here, Kia has probably changed its login flow — try
+  `uv sync --upgrade-package hyundai-kia-connect-api`.
+- **Watch shows `Kia rate limited`** — too many calls against the
+  account. Back off; the intervals in `.env` exist to prevent this.
+- **A long-press refresh seems to do nothing** — check `forced` in the
+  response. `false` means you were inside `LIVE_FORCE_MIN_SECONDS` and
+  got cached data on purpose, which is the intended behaviour rather
+  than a fault.
+- **A field reads wrong or empty on the watch** — run
+  `uv run python tools/dump_vehicle.py` in `proxy/` and compare the
+  real payload against the mapping in `app/sources/live.py`. The dump
+  redacts VIN and coordinates and lists which fields came back null.
 - **Watch sits on `Connecting…` forever** — the companion isn't sending
   its ready nudge, usually because the phone's Bluetooth link to the
   watch is down or the mobile app isn't running. Re-open the app on
@@ -341,10 +383,12 @@ The phased plan lives in `DESIGN.md`. Short version:
 
 1. Watchapp with demo data ← **done**
 2. Proxy skeleton + end-to-end wiring against demo ← **done**
-3. Proxy wired to `hyundai_kia_connect_api` with SQLite persistence
-4. UX polish (richer status line, persist last-known state on the
-   watch, units toggle in Clay)
-5. PV5-specific payload validation once the vehicle is on the account
+3. Proxy wired to `hyundai_kia_connect_api`, SQLite persistence, live
+   rate limits, PV5 field mappings confirmed against a real dump
+   ← **done**
+4. Watchapp laid out for the Pebble Time 2 (`emery`) ← **done**
+5. UX polish (richer status line, persist last-known state on the
+   watch for instant boot)
 
 ## For forkers
 

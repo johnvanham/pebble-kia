@@ -7,12 +7,15 @@ actually lands should move into `DESIGN.md`'s phased plan.
 ## Warning: bloat risk
 
 Polish bloats fast. Every font variant, every image resource, every
-secondary window eats into the basalt platform's 24 KB heap and the
-256 KB resource budget, and slows build + iteration loops. Before
-picking anything off this list:
+secondary window eats into the app memory budget and slows build +
+iteration loops. Emery has 128 KB and is the primary target, but basalt
+and diorite have half that, so they set the ceiling. Before picking
+anything off this list:
 
 - Sanity-check the memory report (`pebble build` footer) after each
-  change. If free heap drops below ~40 KB on basalt, stop and reassess.
+  change — it prints the real per-platform figure, which is worth
+  trusting over any number written down here. If free heap on basalt
+  drops below a quarter of the total, stop and reassess.
 - Prefer drawing primitives over bitmap resources where it costs one
   update proc instead of a PNG atlas.
 - Don't chase features the user hasn't asked to see; pick the one or
@@ -23,14 +26,6 @@ picking anything off this list:
 
 ## Main screen
 
-- **Loading spinner (rotating arc)** replacing the current `...` glyph,
-  so slow refreshes don't look frozen. One animation timer, no assets.
-- **Battery colour ramp** at 10 / 20 / 50 % thresholds instead of the
-  current two-step red/blue. Cheap — only the colour constants change.
-- **Live-ticking "ago" text.** Today the status line only redraws when
-  data changes, so "2m ago" can sit stale for minutes. Subscribe to a
-  `tick_timer_service` minute tick and re-mark the canvas dirty. Cost:
-  a handful of extra redraws per minute.
 - **Per-vehicle icon** (car / van silhouette picked from a body-type
   field returned by the proxy). Needs a small bitmap atlas and a
   proxy-side body_type field in the vehicle list. Starts cheap if it's
@@ -62,10 +57,6 @@ picking anything off this list:
 
 ## Configuration
 
-- **Units toggle in Clay** — exposes `PBK_USE_MILES` as a user setting
-  instead of a compile-time macro. Deferred per current DESIGN.md
-  "Display units" section; trivial once the Clay schema grows a
-  checkbox.
 - **Refresh-interval preference** — Clay field for how often the watch
   auto-polls on top of user-triggered refreshes. Would need a timer on
   the watch and coordination with the proxy's rate limit so the client

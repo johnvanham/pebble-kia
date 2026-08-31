@@ -1,6 +1,7 @@
 # Pebble Kia Watch App — Design
 
-Status: draft / planning. No code yet.
+Status: phases 1-3 built. Live Kia data flows watch -> companion ->
+proxy -> Kia Connect.
 
 Goal: view live stats for a Kia PV5 Passenger (and future vehicles on the same
 account) from a Pebble smartwatch — state of charge, estimated range, charging
@@ -106,8 +107,8 @@ informed choice to strip the proxy out.
 - Python 3.12, FastAPI, `hyundai_kia_connect_api` as a dependency.
 - Endpoints:
   - `GET /vehicles` — list vehicles on the account (id, VIN, nickname, model).
-  - `GET /vehicles/{id}/status` — cached state; `?force=1` triggers a live
-    refresh (rate-limited, default ≥ 10 minutes between live pulls).
+  - `GET /vehicles/{id}/status` — cached state; `?force=1` wakes the
+    vehicle (rate-limited, default ≥ 15 minutes between wakes).
   - `POST /vehicles/{id}/refresh` — explicit refresh, same rate limit.
 - Auth: single shared bearer token in an env var; the companion sends it on
   every call. No per-user login — this is a single-user system.
@@ -134,8 +135,10 @@ two implementations selected by the `DATA_SOURCE` env var:
   loops on `loop_seconds` so a demo never ends; see
   `proxy/scenarios/*.json` for shipped examples (rapid charge,
   AC charge, daily drive, preconditioning).
-- `live` — will call `hyundai_kia_connect_api`. Currently a stub that
-  returns 501 on every call; implemented in phase 3.
+- `live` — calls `hyundai_kia_connect_api` against the owner's Kia
+  account. Normalises the library's `Vehicle` to the same
+  `VehicleStatus` the demo source emits, converting to km/°C at the
+  boundary so the wire contract stays metric.
 
 Both sources sit behind the same cache layer. Cache TTL is source-
 specific: `LIVE_REFRESH_MIN_SECONDS` (default 600) protects the 12V
@@ -144,15 +147,34 @@ progression visible to polling clients without a long-press refresh
 every tick. Clients (watch, HA, dashboard) are unaware of which source
 is serving them.
 
-### Token bootstrap (`proxy/bootstrap/`)
+There are two distinct kinds of upstream read, and the difference
+matters for the 12V battery:
 
-- Kia EU login is a browser-based SSO flow that can't be automated purely from
-  Python. One-time desktop step using the community Selenium-based capture
-  script (tracked in hyundai_kia_connect_api issue #1098, which fixes the
-  timing + German-locale bugs in the older `HyundaiFetchApiTokensSelenium.py`).
-- Output: a refresh token written into the proxy's SQLite store. The proxy
-  then runs headlessly and only re-bootstraps on token expiry or password
-  change.
+- An ordinary read asks Kia for the state the vehicle last reported.
+  It costs an API call and nothing else — the car stays asleep. This is
+  what the watch's 15s poll and the detector both do, and
+  `LIVE_REFRESH_MIN_SECONDS` bounds how often it reaches Kia.
+- A forced read (`?force=1`, `POST /refresh`, the watch's long-press)
+  wakes the telematics unit for genuinely current data. That draws on
+  the 12V battery, so it has its own harder floor,
+  `LIVE_FORCE_MIN_SECONDS` (default 900). A forced read inside that
+  window is **downgraded, not refused**: the client gets cached data
+  and `forced: false` in the response, so a impatient long-press costs
+  nothing and never surfaces an error. `forced` is the only way to tell
+  a real wake from a downgrade from outside.
+
+### Kia authentication
+
+- EU login is plain username/password (`KIA_USERNAME` / `KIA_PASSWORD`).
+  `hyundai_kia_connect_api` performs the OAuth2 exchange and the RSA
+  password encryption internally.
+- This supersedes the one-time Selenium/reCAPTCHA bootstrap this document
+  originally budgeted for. That was necessary before library v4.12.0;
+  it no longer is, and `proxy/bootstrap/` was never built as a result.
+- The resulting refresh token is persisted to the proxy's SQLite store so
+  a restart doesn't re-login. The password and PIN are stripped before
+  the token is written — they are re-injected from settings at login
+  time and have no reason to sit on disk.
 
 ### Notifications
 
@@ -293,19 +315,21 @@ server); the list below reflects the path actually taken.
    proxy. Watch fetches the vehicle list and per-vehicle status over
    AppMessage — no compiled fallback; loading and error states rendered
    in the UI. **Done.**
-3. **Proxy wired to Kia.** Implement the `live` source on top of
-   `hyundai_kia_connect_api`, document the one-time Selenium bootstrap,
-   add SQLite persistence so cached state survives restarts.
-4. **Detail + picker screens polish, configuration UX improvements**
-   (status-line error detail, last-update indicator, unit toggle in
-   Clay, persist last-known state on the watch for instant boot).
-5. **PV5-specific validation.** Once a PV5 is on the account, inspect
-   the real `ccs2/carstatus/latest` payload, patch the proxy's vehicle
-   adapter, confirm field mappings (the PV5 is new enough that the
-   community library may not yet normalise every field correctly).
-
-Phases 1–4 can be built against an EV6/EV9 today; phase 5 is the
-PV5-specific pass once the vehicle is delivered.
+3. **Proxy wired to Kia.** `live` source on top of
+   `hyundai_kia_connect_api`, SQLite persistence for the refresh token
+   and last-known state, a hard floor on car-waking refreshes, and the
+   transition detector routed through the shared cache so one interval
+   is one upstream call. PV5 field mappings confirmed against a real
+   payload dump (`proxy/tools/dump_vehicle.py`) rather than guessed —
+   this absorbed what was originally a separate phase 5. **Done.**
+4. **Watchapp on emery.** The Pebble Time 2 has a larger display than
+   the Pebble Time the UI was laid out for, so geometry is derived from
+   runtime layer bounds instead of basalt-sized pixel constants. Emery
+   is the platform the design is tuned for; basalt, diorite and chalk
+   still build.
+5. **Detail + picker screens polish, configuration UX improvements**
+   (status-line error detail, last-update indicator, persist last-known
+   state on the watch for instant boot).
 
 ## Risks and open questions
 
@@ -314,34 +338,49 @@ PV5-specific pass once the vehicle is delivered.
   user-triggered refresh only, exponential backoff on errors. Smartcar is a
   licensed fallback if this becomes untenable, but its data set is narrower
   and it's paid.
-- **12V battery drain.** Frequent live pulls wake the telematics unit and
-  drain the 12V. The proxy must rate-limit and prefer cached data.
-- **PV5 payload shape.** Unknown until hardware is available; likely uses the
-  newer CCS2 endpoint (`/api/v1/spa/vehicles/{id}/ccs2/carstatus/latest`).
-  Budget for a patch to the library's PV5 vehicle adapter.
-- **Auth fragility.** Kia EU SSO changes periodically; the Selenium bootstrap
-  may need updates. Track upstream issue #1098 and successors.
-- **Pebble constraints.** ~24–96 KB app memory depending on platform; keep
-  fonts/images modest, avoid long strings in AppMessage.
+- **12V battery drain.** Only *forced* pulls wake the telematics unit.
+  `LIVE_FORCE_MIN_SECONDS` bounds them per vehicle, the detector never
+  forces, and ordinary reads take Kia's server-side state. The failure
+  mode to watch for is a client that forces on a timer — nothing does
+  today, and nothing should.
+- **PV5 payload shape.** The PV5 is new enough that the community library
+  may not normalise every field. `proxy/tools/dump_vehicle.py` dumps the
+  real payload (VIN and coordinates redacted) so a mapping can be checked
+  against the car rather than inferred; re-run it when Kia reshapes
+  responses or a field starts reading wrong on the watch.
+- **Auth fragility.** Kia EU periodically changes its login flow, and the
+  library has had to follow it more than once. A break shows up as a 502
+  with "Kia login failed" rather than silence; the fix is normally a
+  library upgrade.
+- **Pebble constraints.** 128 KB app memory on emery, half that on basalt
+  and diorite, so the smaller platforms set the ceiling. (The 24 KB figure
+  this file used to quote is aplite's, which the project doesn't target.)
+  Keep fonts/images modest, avoid long strings in AppMessage.
 - **Single-user assumption.** Proxy is intentionally not multi-tenant; if that
   changes, auth + storage need rework.
 
-## Repo layout (planned)
+## Repo layout
 
 ```
 proxy/            # FastAPI service + Dockerfile
   app/
-  bootstrap/      # one-time Selenium token capture helper
+    sources/      # demo | live data sources behind one protocol
+    store.py      # SQLite: Kia refresh token + last-known state
+  scenarios/      # time-evolving demo payloads
+  tools/          # dump_vehicle.py — real payload capture, redacted
   tests/
 pebble/           # Pebble watchapp
   src/c/          # watchapp C source
   src/pkjs/       # PebbleKit JS companion
-  resources/      # images, fonts
   package.json    # pebble project manifest
   wscript
 DESIGN.md         # this file
 README.md         # quickstart
 ```
+
+There is no `resources/` — the watchapp draws everything with system
+fonts and graphics primitives, which is what keeps it comfortable on the
+smaller platforms.
 
 ## Building and running
 

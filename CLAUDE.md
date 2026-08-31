@@ -16,13 +16,15 @@ deliberate — don't re-litigate it without being asked.
 
 ## Current phase
 
-Phase 2 done: watch → companion → proxy wiring is in place end-to-end
-against the demo data source. Watch no longer has compiled-in demo data;
-the companion's Clay config page (`pebble/src/pkjs/config.js`) holds
-proxy URL + bearer token in `localStorage['clay-settings']`. The proxy
-(`proxy/`) has a pluggable data-source layer — the `demo` source reads
-an editable `proxy/demo-data.json`; the `live` source is a 501 stub
-until phase 3 wires up `hyundai_kia_connect_api`.
+Phase 3 done: the `live` source talks to the owner's real Kia account
+via `hyundai_kia_connect_api`, with SQLite persistence for the refresh
+token and last-known state. `DATA_SOURCE=live` in `proxy/.env` switches
+it on; `demo` remains for offline iteration and still drives the
+scenario replayer.
+
+The owner's watch is now a **Pebble Time 2 (`emery`)**, which has a
+larger display than the Pebble Time the UI was originally laid out for.
+Emery is the primary target; basalt, diorite and chalk still build.
 
 Status table at the top of `README.md` reflects current state; update it
 as phases land.
@@ -46,10 +48,14 @@ Python 3.13 managed by `uv`. Iterate locally with:
 
 ```sh
 cd proxy
-cp .env.example .env   # fill in PROXY_BEARER_TOKEN
+cp .env.example .env   # fill in PROXY_BEARER_TOKEN (+ KIA_* for live)
 uv sync
 uv run uvicorn app.main:app --reload
+uv run pytest
 ```
+
+`.env` holds the owner's real Kia password. It is gitignored — never
+read it back into a transcript or echo it in command output.
 
 Guardrails:
 
@@ -63,12 +69,23 @@ Guardrails:
 - Cache/rate-limit belong in `app/cache.py`, not in individual sources.
   The 12V drain concern only matters for `live`, but `demo` uses the
   same cache so behaviour is testable without a car.
-- Live source is a stub today — raise `LiveNotYetImplemented` rather
-  than faking data; it surfaces as HTTP 501 and stays loud.
-- The machine this runs on uses Podman, not Docker proper (the `docker`
-  binary is the `podman-docker` shim). Dockerfiles work unchanged;
-  `docker compose` is alias for `podman compose`. Watch for SELinux
-  label issues on bind mounts (`:z` / `:Z`).
+- Two kinds of upstream read, and the distinction is load-bearing. An
+  ordinary read takes the state Kia already holds and leaves the car
+  asleep. A *forced* read wakes the telematics unit and draws on the
+  12V battery, so it has a harder floor (`LIVE_FORCE_MIN_SECONDS`) that
+  `force=1` cannot bypass — a force inside the window is downgraded to
+  a cached read with `forced: false`, never an error. Do not add a code
+  path that forces on a timer.
+- The transition detector goes through `StatusCache`, not the source
+  directly, so one detector interval is one upstream call shared with
+  whatever the watch is polling. Keep it that way.
+- Never let Kia credentials reach disk beyond `.env`: `store.save_token`
+  strips `password` and `pin` before writing, and `tools/dump_vehicle.py`
+  redacts VIN and coordinates.
+- The dev machine is Arch (Omarchy) running real Docker from the
+  `docker` package — not the `podman-docker` shim an earlier note here
+  claimed. Prefer `pacman` for anything system-level. The Pi that
+  actually hosts the proxy is a separate box.
 
 ## Testing end-to-end in the emulator
 
@@ -131,9 +148,11 @@ SDK docs rather than guessing API shapes. Known gotchas:
   platforms — guard with `#ifdef PBL_COLOR`. `GColorBlack` / `GColorWhite`
   are safe everywhere.
 - Target platforms in `package.json`: `basalt`, `chalk`, `diorite`,
-  `emery`. The owner's daily driver is an existing Pebble Time (basalt)
-  with a Pebble Time 2 (emery) on order — keep the app's footprint
-  small enough that basalt stays comfortable (24 KB heap).
+  `emery`. The owner's daily driver is now a Pebble Time 2 (`emery`),
+  so that is what the layout is tuned for — but the app still has to
+  build and stay legible on the others, and basalt is the tight one for
+  memory. Derive geometry from `layer_get_bounds()` rather than
+  hard-coding pixel constants; that is what keeps all four working.
 - `app_state_subscribe` dedupes by function pointer, so it's safe to
   call on each window load.
 
@@ -185,9 +204,10 @@ it through that helper rather than hard-coding "km". `DESIGN.md` →
 - Replace the proxy with direct phone-to-Kia mode. The decision is in
   `DESIGN.md`; the proxy is reused by Home Assistant and a planned
   dashboard, so it earns its keep beyond the watchapp.
-- Introduce CI, pre-commit hooks, linters, or test frameworks without
-  asking — none exist yet and the project may be too small to need
-  them.
+- Introduce CI, pre-commit hooks, or linters without asking — none
+  exist and the project may be too small to need them. (pytest *does*
+  exist now, under `proxy/tests/`, in the `dev` dependency group. Add
+  tests there freely; don't add a second framework.)
 
 ## When picking up next
 
