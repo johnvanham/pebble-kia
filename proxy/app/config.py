@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     ntfy_topic: str = Field("", alias="NTFY_TOPIC")
     ntfy_auth_token: str = Field("", alias="NTFY_AUTH_TOKEN")
     log_level: str = Field("info", alias="LOG_LEVEL")
+
+    @field_validator("detector_interval_seconds", mode="before")
+    @classmethod
+    def _blank_means_default(cls, v):
+        # Both .env and docker-compose express "unset" as an empty string
+        # rather than an absent key, and an empty string is not an int.
+        return None if v == "" else v
 
 
 DEMO_DETECTOR_SECONDS = 20
