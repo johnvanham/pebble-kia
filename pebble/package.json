@@ -15,10 +15,10 @@
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
+      "emery",
       "basalt",
-      "chalk",
       "diorite",
-      "emery"
+      "chalk"
     ],
     "watchapp": {
       "watchface": false

@@ -4,6 +4,7 @@
 
 #include "app_state.h"
 #include "ipc.h"
+#include "layout.h"
 #include "ui_detail.h"
 #include "units.h"
 
@@ -82,15 +83,19 @@ static void draw_battery(GContext *ctx, GRect r, uint8_t soc_pct,
   graphics_context_set_fill_color(ctx, GColorWhite);
 #endif
   graphics_context_set_stroke_color(ctx, GColorWhite);
-  graphics_draw_rect(ctx, r);
 
-  GRect nub = GRect(r.origin.x + r.size.w, r.origin.y + r.size.h / 4, 3,
-                    r.size.h / 2);
+  int16_t nub_w = r.size.h / 3;
+  GRect body = GRect(r.origin.x, r.origin.y, r.size.w - nub_w, r.size.h);
+  graphics_draw_rect(ctx, body);
+
+  GRect nub = GRect(body.origin.x + body.size.w, r.origin.y + r.size.h / 4,
+                    nub_w, r.size.h / 2);
   graphics_fill_rect(ctx, nub, 0, GCornerNone);
 
-  int inner_w = r.size.w - 4;
-  int fill_w = (inner_w * soc_pct) / 100;
-  GRect fill_r = GRect(r.origin.x + 2, r.origin.y + 2, fill_w, r.size.h - 4);
+  int16_t inner_w = body.size.w - 4;
+  int16_t fill_w = (inner_w * soc_pct) / 100;
+  GRect fill_r = GRect(body.origin.x + 2, body.origin.y + 2, fill_w,
+                       body.size.h - 4);
   graphics_fill_rect(ctx, fill_r, 0, GCornerNone);
 }
 
@@ -109,33 +114,37 @@ static void draw_spinner(GContext *ctx, GRect box) {
 
 static void draw_centered_message(GContext *ctx, GRect b, const char *title,
                                   const char *sub) {
-  GFont tf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  GFont sf = fonts_get_system_font(FONT_KEY_GOTHIC_18);
-  int y = b.size.h / 2 - 30;
-  GRect tr = GRect(8, y, b.size.w - 16, 28);
-  graphics_draw_text(ctx, title, tf, tr, GTextOverflowModeWordWrap,
-                     GTextAlignmentCenter, NULL);
+  GFont tf = fonts_get_system_font(LAYOUT_FONT_VALUE);
+  GFont sf = fonts_get_system_font(LAYOUT_FONT_BODY);
+  int16_t y = b.origin.y + b.size.h / 2 - LAYOUT_H_VALUE;
+  graphics_draw_text(ctx, title, tf, layout_row(b, y, LAYOUT_H_VALUE),
+                     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   if (sub && sub[0]) {
-    GRect sr = GRect(8, y + 30, b.size.w - 16, b.size.h - y - 34);
-    graphics_draw_text(ctx, sub, sf, sr, GTextOverflowModeWordWrap,
-                       GTextAlignmentCenter, NULL);
+    int16_t sub_y = y + LAYOUT_H_VALUE + LAYOUT_GAP;
+    int16_t sub_h = b.origin.y + b.size.h - LAYOUT_PAD_V - sub_y;
+    graphics_draw_text(ctx, sub, sf, layout_row(b, sub_y, sub_h),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
 }
 
 static void draw_indicator(GContext *ctx, GRect b) {
+  GRect row = layout_row(b, b.origin.y + LAYOUT_PAD_V, LAYOUT_H_IND);
+  int16_t right = row.origin.x + row.size.w;
   const char *error = app_state_error();
   if (error) {
-    GFont ind_font = fonts_get_system_font(FONT_KEY_GOTHIC_14);
+    GFont ind_font = fonts_get_system_font(LAYOUT_FONT_IND);
 #ifdef PBL_COLOR
     graphics_context_set_text_color(ctx, GColorFolly);
 #endif
-    GRect ind_rect = GRect(b.size.w - 40, 4, 36, 16);
+    GRect ind_rect = GRect(right - LAYOUT_W_IND, row.origin.y, LAYOUT_W_IND,
+                           LAYOUT_H_IND);
     graphics_draw_text(ctx, "ERR", ind_font, ind_rect,
                        GTextOverflowModeTrailingEllipsis, GTextAlignmentRight,
                        NULL);
     graphics_context_set_text_color(ctx, GColorWhite);
   } else if (app_state_is_busy()) {
-    draw_spinner(ctx, GRect(b.size.w - 20, 4, 14, 14));
+    draw_spinner(ctx, GRect(right - LAYOUT_D_SPINNER, row.origin.y,
+                            LAYOUT_D_SPINNER, LAYOUT_D_SPINNER));
   }
 }
 
@@ -165,9 +174,10 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   if (!v) return;
 
   // --- Name (top) ---
-  GFont name_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
-  GRect name_rect = GRect(0, 2, b.size.w, 22);
-  graphics_draw_text(ctx, v->nickname, name_font, name_rect,
+  int16_t top = b.origin.y + LAYOUT_PAD_V;
+  GFont name_font = fonts_get_system_font(LAYOUT_FONT_TITLE);
+  graphics_draw_text(ctx, v->nickname, name_font,
+                     layout_row(b, top, LAYOUT_H_TITLE),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
@@ -178,37 +188,52 @@ static void canvas_update(Layer *layer, GContext *ctx) {
     return;
   }
 
+  // The number/bar/range block is centred in whatever is left between
+  // the name and the status row, so the taller emery screen spreads the
+  // readout out instead of leaving a gap at the bottom.
+  int16_t status_y = b.origin.y + b.size.h - LAYOUT_PAD_V - LAYOUT_H_STATUS;
+  int16_t block_top = top + LAYOUT_H_TITLE;
+  int16_t block_h = LAYOUT_H_SOC + LAYOUT_GAP + LAYOUT_H_BAR + LAYOUT_GAP +
+                    LAYOUT_H_VALUE;
+  int16_t y = block_top + (status_y - block_top - block_h) / 2;
+  if (y < block_top) y = block_top;
+
   // --- Big SoC number ---
-  GFont soc_font = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
+  GFont soc_font = fonts_get_system_font(LAYOUT_FONT_SOC);
   char soc_buf[8];
   snprintf(soc_buf, sizeof(soc_buf), "%d", v->soc_pct);
-  int soc_y = 24;
-  GRect soc_rect = GRect(0, soc_y, b.size.w - 24, 48);
+  GRect soc_row = layout_row(b, y, LAYOUT_H_SOC);
+  GRect soc_rect = GRect(soc_row.origin.x, y, soc_row.size.w - LAYOUT_W_PCT,
+                         LAYOUT_H_SOC);
   graphics_draw_text(ctx, soc_buf, soc_font, soc_rect,
                      GTextOverflowModeWordWrap, GTextAlignmentRight, NULL);
 
-  GFont pct_font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  GRect pct_rect = GRect(b.size.w - 22, soc_y + 18, 22, 28);
+  GFont pct_font = fonts_get_system_font(LAYOUT_FONT_PCT);
+  GRect pct_rect = GRect(soc_row.origin.x + soc_row.size.w - LAYOUT_W_PCT,
+                         y + LAYOUT_H_SOC - LAYOUT_H_PCT - 2, LAYOUT_W_PCT,
+                         LAYOUT_H_PCT);
   graphics_draw_text(ctx, "%", pct_font, pct_rect, GTextOverflowModeWordWrap,
                      GTextAlignmentLeft, NULL);
 
   // --- Battery bar ---
-  int bar_w = b.size.w - 40;
-  GRect bar = GRect(20, soc_y + 52, bar_w - 4, 10);
-  draw_battery(ctx, bar, v->soc_pct, v->is_charging);
+  y += LAYOUT_H_SOC + LAYOUT_GAP;
+  GRect bar_row = layout_row(b, y, LAYOUT_H_BAR);
+  draw_battery(ctx, grect_inset(bar_row, GEdgeInsets(0, bar_row.size.w / 8)),
+               v->soc_pct, v->is_charging);
 
   // --- Range ---
-  GFont range_font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  y += LAYOUT_H_BAR + LAYOUT_GAP;
+  GFont range_font = fonts_get_system_font(LAYOUT_FONT_VALUE);
   char range_buf[16];
   format_distance_km(v->range_km, range_buf, sizeof(range_buf));
-  GRect range_rect = GRect(0, soc_y + 66, b.size.w, 26);
-  graphics_draw_text(ctx, range_buf, range_font, range_rect,
+  graphics_draw_text(ctx, range_buf, range_font,
+                     layout_row(b, y, LAYOUT_H_VALUE),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
   // --- Status row (bottom). Error text replaces the normal line so the
   // user can actually read what went wrong without digging through logs.
-  GFont status_font = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
+  GFont status_font = fonts_get_system_font(LAYOUT_FONT_STATUS);
   char status_buf[APP_ERROR_LEN];
   if (error) {
 #ifdef PBL_COLOR
@@ -222,8 +247,8 @@ static void canvas_update(Layer *layer, GContext *ctx) {
     snprintf(status_buf, sizeof(status_buf), "%s  %s  %s", plug_label(v->plug),
              v->doors_locked ? "LOCK" : "OPEN", ago_buf);
   }
-  GRect status_rect = GRect(0, b.size.h - 20, b.size.w, 18);
-  graphics_draw_text(ctx, status_buf, status_font, status_rect,
+  graphics_draw_text(ctx, status_buf, status_font,
+                     layout_row(b, status_y, LAYOUT_H_STATUS),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 }

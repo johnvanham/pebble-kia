@@ -3,6 +3,7 @@
 #include <pebble.h>
 
 #include "app_state.h"
+#include "layout.h"
 #include "units.h"
 
 static Window *s_window;
@@ -10,11 +11,14 @@ static Layer *s_canvas;
 
 static void draw_row(GContext *ctx, GRect row, const char *label,
                      const char *value) {
-  GFont label_font = fonts_get_system_font(FONT_KEY_GOTHIC_14);
-  GFont value_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
-  GRect label_rect = GRect(row.origin.x, row.origin.y, row.size.w / 2, row.size.h);
-  GRect value_rect = GRect(row.origin.x + row.size.w / 2, row.origin.y,
-                           row.size.w / 2, row.size.h);
+  GFont label_font = fonts_get_system_font(LAYOUT_FONT_ROW_LABEL);
+  GFont value_font = fonts_get_system_font(LAYOUT_FONT_ROW_VALUE);
+  // The values are set in a heavier font than the labels, so they get
+  // the larger share of the row.
+  int16_t label_w = (row.size.w * 45) / 100;
+  GRect label_rect = GRect(row.origin.x, row.origin.y, label_w, row.size.h);
+  GRect value_rect = GRect(row.origin.x + label_w, row.origin.y,
+                           row.size.w - label_w, row.size.h);
   graphics_draw_text(ctx, label, label_font, label_rect,
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft,
                      NULL);
@@ -32,47 +36,46 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   graphics_fill_rect(ctx, b, 0, GCornerNone);
   graphics_context_set_text_color(ctx, GColorWhite);
 
-  GFont title_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
-  GRect title_rect = GRect(0, 2, b.size.w, 22);
-  graphics_draw_text(ctx, v->nickname, title_font, title_rect,
+  int16_t top = b.origin.y + LAYOUT_PAD_V;
+  GFont title_font = fonts_get_system_font(LAYOUT_FONT_TITLE);
+  graphics_draw_text(ctx, v->nickname, title_font,
+                     layout_row(b, top, LAYOUT_H_TITLE),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
   if (!v->have_status) {
-    GFont body = fonts_get_system_font(FONT_KEY_GOTHIC_18);
-    GRect r = GRect(8, 60, b.size.w - 16, 80);
-    graphics_draw_text(ctx, "No data yet.", body, r, GTextOverflowModeWordWrap,
-                       GTextAlignmentCenter, NULL);
+    GFont body = fonts_get_system_font(LAYOUT_FONT_BODY);
+    int16_t y = b.origin.y + b.size.h / 2 - LAYOUT_H_VALUE / 2;
+    graphics_draw_text(ctx, "No data yet.", body,
+                       layout_row(b, y, LAYOUT_H_VALUE),
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     return;
   }
 
-  int y = 28;
-  int row_h = 22;
-  int padding_x = 10;
-  int row_w = b.size.w - padding_x * 2;
+  int16_t y = top + LAYOUT_H_TITLE + LAYOUT_GAP;
   char buf[24];
 
   format_distance_km(v->odo_km, buf, sizeof(buf));
-  draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Odometer", buf);
-  y += row_h;
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Odometer", buf);
+  y += LAYOUT_H_ROW;
 
   snprintf(buf, sizeof(buf), "%d C", v->cabin_temp_c);
-  draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Cabin", buf);
-  y += row_h;
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Cabin", buf);
+  y += LAYOUT_H_ROW;
 
-  draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Climate",
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Climate",
            v->is_climate_on ? "On" : "Off");
-  y += row_h;
+  y += LAYOUT_H_ROW;
 
-  draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Doors",
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Doors",
            v->doors_locked ? "Locked" : "Unlocked");
-  y += row_h;
+  y += LAYOUT_H_ROW;
 
   if (v->is_charging) {
     snprintf(buf, sizeof(buf), "%d.%d kW", v->charge_kw_x10 / 10,
              v->charge_kw_x10 % 10);
-    draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Charging", buf);
-    y += row_h;
+    draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Charging", buf);
+    y += LAYOUT_H_ROW;
 
     int h = v->charge_eta_min / 60;
     int m = v->charge_eta_min % 60;
@@ -81,11 +84,9 @@ static void canvas_update(Layer *layer, GContext *ctx) {
     } else {
       snprintf(buf, sizeof(buf), "%d min", m);
     }
-    draw_row(ctx, GRect(padding_x, y, row_w, row_h), "ETA", buf);
-    y += row_h;
+    draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "ETA", buf);
   } else {
-    draw_row(ctx, GRect(padding_x, y, row_w, row_h), "Charging", "Idle");
-    y += row_h;
+    draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Charging", "Idle");
   }
 }
 
