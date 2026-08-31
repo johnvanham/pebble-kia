@@ -14,4 +14,8 @@ class DataSource(Protocol):
 
     def list_vehicles(self) -> list[Vehicle]: ...
 
-    def fetch_status(self, vehicle_id: str) -> VehicleStatus: ...
+    # force=True means "wake the vehicle"; False reads whatever the
+    # upstream already has cached.
+    def fetch_status(
+        self, vehicle_id: str, *, force: bool = False
+    ) -> VehicleStatus: ...

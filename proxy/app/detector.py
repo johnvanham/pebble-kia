@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Callable
 
 from .models import VehicleStatus
 from .notifier import Notifier
-from .sources.base import DataSource, VehicleNotFound
+from .sources.base import VehicleNotFound
 
 log = logging.getLogger("detector")
 
@@ -78,12 +79,15 @@ def _status_transitions(
 class TransitionDetector:
     def __init__(
         self,
-        source: DataSource,
+        fetch_status: Callable[[str], VehicleStatus],
         notifier: Notifier,
         vehicle_nicknames: dict[str, str],
         interval_seconds: int,
     ) -> None:
-        self.source = source
+        # A cached, never-forced read rather than the source directly, so
+        # detector polls and watch polls share one upstream call instead
+        # of the detector hammering Kia on its own interval.
+        self.fetch_status = fetch_status
         self.notifier = notifier
         self.nicknames = vehicle_nicknames
         self.interval = interval_seconds
@@ -116,10 +120,10 @@ class TransitionDetector:
     async def _tick(self) -> None:
         for vehicle_id, name in self.nicknames.items():
             try:
-                # fetch_status is synchronous today (file read for demo,
-                # will be network I/O for live). Offload to a thread so
-                # the detector loop stays responsive.
-                cur = await asyncio.to_thread(self.source.fetch_status, vehicle_id)
+                # fetch_status is blocking (file read for demo, network
+                # I/O for live). Offload so the detector loop stays
+                # responsive.
+                cur = await asyncio.to_thread(self.fetch_status, vehicle_id)
             except VehicleNotFound:
                 continue
             prev = self._prev.get(vehicle_id)

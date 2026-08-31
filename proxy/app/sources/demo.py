@@ -96,7 +96,8 @@ class DemoDataSource:
         data = self._load()
         return [Vehicle(**v) for v in data["vehicles"]]
 
-    def fetch_status(self, vehicle_id: str) -> VehicleStatus:
+    def fetch_status(self, vehicle_id: str, *, force: bool = False) -> VehicleStatus:
+        # force is meaningless here: there is no vehicle to wake.
         data = self._load()
         for v in data["vehicles"]:
             if v["id"] != vehicle_id:

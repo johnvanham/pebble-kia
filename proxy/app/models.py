@@ -36,3 +36,7 @@ class StatusResponse(BaseModel):
     status: VehicleStatus
     fetched_at: datetime
     from_cache: bool
+    # Whether this response actually woke the vehicle. A forced refresh
+    # inside LIVE_FORCE_MIN_SECONDS comes back with forced=False, which
+    # is the only way a client can tell the difference.
+    forced: bool = False

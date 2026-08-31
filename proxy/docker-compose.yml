@@ -12,7 +12,16 @@ services:
       - DEMO_DATA_FILE=/app/demo-data.json
       - LIVE_REFRESH_MIN_SECONDS=${LIVE_REFRESH_MIN_SECONDS:-600}
       - DEMO_REFRESH_MIN_SECONDS=${DEMO_REFRESH_MIN_SECONDS:-5}
-      - DETECTOR_INTERVAL_SECONDS=${DETECTOR_INTERVAL_SECONDS:-20}
+      - LIVE_FORCE_MIN_SECONDS=${LIVE_FORCE_MIN_SECONDS:-900}
+      # Unset on purpose — the app picks 20s for demo, 300s for live.
+      - DETECTOR_INTERVAL_SECONDS=${DETECTOR_INTERVAL_SECONDS:-}
+      # Only read when DATA_SOURCE=live.
+      - KIA_USERNAME=${KIA_USERNAME:-}
+      - KIA_PASSWORD=${KIA_PASSWORD:-}
+      - KIA_PIN=${KIA_PIN:-}
+      - KIA_REGION=${KIA_REGION:-1}
+      - KIA_BRAND=${KIA_BRAND:-1}
+      - PROXY_STATE_DB=/app/state/state.db
       # Proxy reaches ntfy over the compose network. External clients
       # (phone subscribers) go through Caddy at NTFY_PUBLIC_URL.
       - NTFY_URL=${NTFY_URL:-http://ntfy:80}
@@ -23,6 +32,9 @@ services:
       # Bind-mount the demo JSON so edits on the host are picked up by the
       # next forced refresh without a container rebuild.
       - ./demo-data.json:/app/demo-data.json:ro
+      # Kia refresh token + last-known vehicle state. Survives
+      # restarts so the watch isn't waiting on a cold fetch.
+      - proxy-state:/app/state
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -47,3 +59,4 @@ services:
 
 volumes:
   ntfy-data:
+  proxy-state:
