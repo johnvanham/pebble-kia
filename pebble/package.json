@@ -38,7 +38,7 @@
       "CHARGE_ETA_MIN",
       "PLUG",
       "DOORS_LOCKED",
-      "CABIN_TEMP_C",
+      "OUTSIDE_TEMP_C",
       "ODO_KM",
       "IS_CLIMATE_ON",
       "UPDATED_AT",

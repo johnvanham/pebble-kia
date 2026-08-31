@@ -76,7 +76,7 @@ static void handle_status(DictionaryIterator *in) {
   if ((t = dict_find(in, MESSAGE_KEY_CHARGE_ETA_MIN))) s.charge_eta_min = t->value->uint32;
   if ((t = dict_find(in, MESSAGE_KEY_PLUG)))           s.plug = plug_from_wire(t->value->int32);
   if ((t = dict_find(in, MESSAGE_KEY_DOORS_LOCKED)))   s.doors_locked = t->value->uint8 != 0;
-  if ((t = dict_find(in, MESSAGE_KEY_CABIN_TEMP_C)))   s.cabin_temp_c = t->value->int8;
+  if ((t = dict_find(in, MESSAGE_KEY_OUTSIDE_TEMP_C))) s.outside_temp_c = t->value->int8;
   if ((t = dict_find(in, MESSAGE_KEY_ODO_KM)))         s.odo_km = t->value->uint32;
   if ((t = dict_find(in, MESSAGE_KEY_IS_CLIMATE_ON)))  s.is_climate_on = t->value->uint8 != 0;
   if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))     s.updated_at = (time_t)t->value->uint32;

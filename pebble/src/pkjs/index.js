@@ -106,7 +106,7 @@ function statusMessage(vehicleId, data) {
     CHARGE_ETA_MIN: s.charge_eta_min | 0,
     PLUG: PLUG_CODES[s.plug] != null ? PLUG_CODES[s.plug] : 0,
     DOORS_LOCKED: s.doors_locked ? 1 : 0,
-    CABIN_TEMP_C: s.cabin_temp_c | 0,
+    OUTSIDE_TEMP_C: s.outside_temp_c | 0,
     ODO_KM: s.odo_km | 0,
     IS_CLIMATE_ON: s.is_climate_on ? 1 : 0,
     UPDATED_AT: parseIsoSeconds(s.updated_at),

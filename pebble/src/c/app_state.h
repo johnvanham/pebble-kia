@@ -24,7 +24,7 @@ typedef struct {
   uint16_t charge_eta_min;
   PlugState plug;
   bool doors_locked;
-  int8_t cabin_temp_c;
+  int8_t outside_temp_c;
   uint32_t odo_km;
   bool is_climate_on;
   time_t updated_at;
@@ -38,7 +38,7 @@ typedef struct {
   uint16_t charge_eta_min;
   PlugState plug;
   bool doors_locked;
-  int8_t cabin_temp_c;
+  int8_t outside_temp_c;
   uint32_t odo_km;
   bool is_climate_on;
   time_t updated_at;

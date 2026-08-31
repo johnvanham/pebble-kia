@@ -67,7 +67,7 @@ def _status_transitions(
         if cur.is_climate_on:
             out.append((
                 f"{name}: Climate on",
-                f"{cur.cabin_temp_c}°C cabin",
+                f"{cur.outside_temp_c}°C outside",
                 ["fire"],
             ))
         else:

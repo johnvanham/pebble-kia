@@ -44,7 +44,7 @@ def _status(soc: int = 50) -> VehicleStatus:
         is_charging=False,
         plug="unplugged",
         doors_locked=True,
-        cabin_temp_c=18,
+        outside_temp_c=18,
         odo_km=12345,
         updated_at=datetime.now(timezone.utc),
     )

@@ -89,7 +89,7 @@ Shipped scenarios:
 | `scenarios/pv5-rapid-charge.json`    | 30 min DC rapid session with a realistic taper (180→150→120→90→60→35 kW), 20→80%, then unplug, climate on, unlock, lock. Loops every 45 min. |
 | `scenarios/pv5-ac-charge.json`       | Compressed 11 kW AC charge, 30→80%. Loops every 20 min.                |
 | `scenarios/pv5-daily-drive.json`     | Unlock → drive (SoC and range falling, odometer climbing) → lock → return. Loops every 15 min. |
-| `scenarios/pv5-preconditioning.json` | Cold morning: climate starts, cabin warms, unplug, unlock, drive off. Loops every 10 min. |
+| `scenarios/pv5-preconditioning.json` | Cold morning at -2 °C: climate starts, unplug, unlock, drive off. Loops every 10 min. |
 
 Schema of a scenario file:
 

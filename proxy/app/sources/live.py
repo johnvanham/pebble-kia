@@ -140,11 +140,16 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
         charge_eta_min=max(0, round(eta)),
         plug=_derive_plug(vehicle),
         doors_locked=bool(locked),
-        cabin_temp_c=_to_celsius(
-            vehicle.air_temperature,
+        # Outside, not cabin: the PV5 reports no measured cabin temperature.
+        # `Cabin.HVAC.Row1.Driver.Temperature.Value` is the climate setpoint
+        # and reads 'OFF' with the climate off, which the library declines to
+        # map, leaving `air_temperature` None forever. Outside temperature is
+        # a real reading the car always carries.
+        outside_temp_c=_to_celsius(
+            vehicle.outside_temperature,
             # No public accessor for this one, unlike the two distances.
-            vehicle._air_temperature_unit,
-            "air_temperature",
+            vehicle._outside_temperature_unit,
+            "outside_temperature",
         ),
         odo_km=_to_km(vehicle.odometer, vehicle.odometer_unit, "odometer"),
         is_climate_on=bool(climate),

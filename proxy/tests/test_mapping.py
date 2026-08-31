@@ -18,8 +18,8 @@ class StubVehicle:
     ev_estimated_current_charge_duration = None
     ev_battery_is_plugged_in = None
     is_locked = None
-    air_temperature = None
-    _air_temperature_unit = None
+    outside_temperature = None
+    _outside_temperature_unit = None
     odometer = None
     odometer_unit = None
     air_control_is_on = None
@@ -44,8 +44,8 @@ def metric_charging(**overrides) -> StubVehicle:
         ev_estimated_current_charge_duration=95,
         ev_battery_is_plugged_in=1,
         is_locked=True,
-        air_temperature=21.0,
-        _air_temperature_unit="°C",
+        outside_temperature=21.0,
+        _outside_temperature_unit="°C",
         odometer=1234.5,
         odometer_unit="km",
         air_control_is_on=False,
@@ -65,7 +65,7 @@ def test_nominal_charging():
     assert status.charge_eta_min == 95
     assert status.plug == "ac"
     assert status.doors_locked is True
-    assert status.cabin_temp_c == 21
+    assert status.outside_temp_c == 21
     assert status.odo_km == 1234
     assert status.is_climate_on is False
     assert status.updated_at == UPDATED
@@ -77,13 +77,30 @@ def test_imperial_normalises_to_metric():
         ev_driving_range_unit="mi",
         odometer=1000.0,
         odometer_unit="mi",
-        air_temperature=68.0,
-        _air_temperature_unit="°F",
+        outside_temperature=68.0,
+        _outside_temperature_unit="°F",
     ))
 
     assert status.range_km == 161
     assert status.odo_km == 1609
-    assert status.cabin_temp_c == 20
+    assert status.outside_temp_c == 20
+
+
+def test_outside_temperature_survives_an_absent_cabin_reading():
+    # The real PV5: its only cabin figure is the HVAC setpoint, which reads
+    # 'OFF' with the climate off, so the library never sets air_temperature.
+    # Mapping the outside reading instead is the whole point of the field.
+    status = map_status(metric_charging(
+        air_temperature=None,
+        outside_temperature=15.0,
+        _outside_temperature_unit="°C",
+    ))
+
+    assert status.outside_temp_c == 15
+
+
+def test_sub_zero_outside_temperature_is_not_clamped():
+    assert map_status(metric_charging(outside_temperature=-4.0)).outside_temp_c == -4
 
 
 def test_sleeping_car_still_renders():

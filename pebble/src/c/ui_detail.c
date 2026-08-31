@@ -59,8 +59,8 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Odometer", buf);
   y += LAYOUT_H_ROW;
 
-  snprintf(buf, sizeof(buf), "%d C", v->cabin_temp_c);
-  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Cabin", buf);
+  snprintf(buf, sizeof(buf), "%d C", v->outside_temp_c);
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Outside", buf);
   y += LAYOUT_H_ROW;
 
   draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Climate",

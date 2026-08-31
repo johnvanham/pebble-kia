@@ -25,7 +25,7 @@ class VehicleStatus(BaseModel):
     charge_eta_min: int = Field(0, ge=0)
     plug: PlugState
     doors_locked: bool
-    cabin_temp_c: int
+    outside_temp_c: int
     odo_km: int = Field(..., ge=0)
     is_climate_on: bool = False
     updated_at: datetime

@@ -19,7 +19,7 @@
           "charge_eta_min": 0,
           "plug": "unplugged",
           "doors_locked": true,
-          "cabin_temp_c": 12,
+          "outside_temp_c": 12,
           "odo_km": 3421,
           "is_climate_on": false
         },
@@ -33,8 +33,7 @@
           { "at_s": 1500, "patch": { "charge_kw": 35.0,  "soc_pct": 78, "range_km": 312, "charge_eta_min": 4 } },
           { "at_s": 1800, "name": "charge_end",    "patch": { "is_charging": false, "charge_kw": 0.0, "soc_pct": 80, "range_km": 320, "charge_eta_min": 0 } },
           { "at_s": 1860, "name": "unplug",        "patch": { "plug": "unplugged" } },
-          { "at_s": 2100, "name": "climate_start", "patch": { "is_climate_on": true, "cabin_temp_c": 16 } },
-          { "at_s": 2280, "patch": { "cabin_temp_c": 20 } },
+          { "at_s": 2100, "name": "climate_start", "patch": { "is_climate_on": true } },
           { "at_s": 2400, "name": "unlock",        "patch": { "doors_locked": false } },
           { "at_s": 2460, "name": "climate_end",   "patch": { "is_climate_on": false } },
           { "at_s": 2520, "name": "lock",          "patch": { "doors_locked": true } }

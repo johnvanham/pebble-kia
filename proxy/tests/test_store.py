@@ -15,7 +15,7 @@ def make_status(**overrides) -> VehicleStatus:
         charge_eta_min=95,
         plug="ac",
         doors_locked=True,
-        cabin_temp_c=18,
+        outside_temp_c=18,
         odo_km=14231,
         is_climate_on=False,
         updated_at=datetime(2026, 8, 31, 21, 14, 5, tzinfo=timezone.utc),
