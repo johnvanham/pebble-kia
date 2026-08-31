@@ -1,7 +1,7 @@
 # pebble-kia
 
 A Pebble smartwatch app for glancing at Kia vehicle stats —
-state of charge, range, charging status, doors, cabin temp, odometer —
+state of charge, range, charging status, doors, outside temp, odometer —
 backed by a small self-hosted proxy that talks to Kia Connect on the
 user's behalf.
 
@@ -302,7 +302,7 @@ Already covered above. `pebble install --emulator basalt` (or `chalk` /
 - **Up / Down** — switch between vehicles returned by the proxy. If the
   newly-selected vehicle has no cached status yet, the watch asks the
   companion to fetch it.
-- **Select** — open the detail screen (odometer, cabin temp, doors,
+- **Select** — open the detail screen (odometer, outside temp, doors,
   charge rate, ETA).
 - **Select (long press, ≥500ms)** — force refresh the current vehicle
   (POSTs `/vehicles/{id}/refresh`, short vibration, `ERR` top-right if
@@ -316,7 +316,7 @@ the companion never responds, the watch sits on a "Connecting…" screen.
 
 ## Display units
 
-UK defaults: range and odometer render in miles, cabin temp in Celsius,
+UK defaults: range and odometer render in miles, outside temp in Celsius,
 charge rate in kW. Data is transported and cached in km end-to-end; the
 watch converts on the fly. Flip `PBK_USE_MILES` in `pebble/src/c/units.h`
 to `0` and rebuild if you want kilometres. A runtime toggle via Clay

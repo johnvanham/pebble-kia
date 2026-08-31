@@ -5,7 +5,8 @@ proxy -> Kia Connect.
 
 Goal: view live stats for a Kia PV5 Passenger (and future vehicles on the same
 account) from a Pebble smartwatch — state of charge, estimated range, charging
-status, doors/locks, odometer, cabin temperature, last-known location.
+status, doors/locks, odometer, outside temperature, last-known location.
+(The PV5 reports no measured cabin temperature — see "Display units".)
 
 ## Operating assumptions
 
@@ -228,7 +229,7 @@ Deliberate scope limits:
 - Screens:
   - **Main** — big SoC percentage, range, plug status, odometer, last-updated
     timestamp.
-  - **Detail** — door/lock state, cabin temp, 12V SoC, charge rate (kW) if
+  - **Detail** — door/lock state, outside temp, 12V SoC, charge rate (kW) if
     charging, estimated charge-complete time.
   - **Vehicle picker** — only shown when the account has >1 vehicle.
 - Controls: Select = refresh now, Up/Down = switch vehicle (if applicable),
@@ -286,7 +287,7 @@ second client (Home Assistant, dashboard) can pick its own presentation.
 ## Display units
 
 UK deployment: the watch renders range and odometer in miles by default,
-Celsius for cabin temp, kW for charge rate. The owner drives in the UK and
+Celsius for outside temp, kW for charge rate. The owner drives in the UK and
 Kia's head unit shows miles, so the watch matches.
 
 Implementation: `pebble/src/c/units.h` defines `PBK_USE_MILES` (default 1)
@@ -297,6 +298,16 @@ fixed-point, so the helper uses integer math (km × 1000 / 1609, rounded)
 rather than floats. When the configuration UI lands in phase 5 this macro
 can become a Clay setting persisted to `localStorage`; for now it's a
 compile-time constant because the deployment is single-user.
+
+### Cabin temperature is not available
+
+The PV5 reports no measured cabin temperature. The only cabin figure in
+the CCS2 payload is `Cabin.HVAC.Row1.Driver.Temperature`, which is the
+climate *setpoint*, and the library discards it when it reads `OFF` —
+i.e. whenever climate is off. The watch shows
+`Cabin.HVAC.OutsideTemperature` instead, which is always populated and
+is what `outside_temp_c` carries. If a future model does report a cabin
+reading, it wants a new field rather than a redefinition of this one.
 
 ## Phased plan
 
