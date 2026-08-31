@@ -69,14 +69,20 @@ proxy/             FastAPI proxy (phase 2: demo data source only)
 Everything runs on one machine, no phone or physical watch needed.
 Useful for iterating on the watchapp UI or exercising the proxy.
 
-**One-off setup** — install the Rebble Pebble SDK and `uv` (Fedora
-example; see https://developer.repebble.com/sdk/ for other platforms):
+**One-off setup** — install the Pebble SDK and `uv`. See
+https://developer.repebble.com/sdk/ for platforms not listed here.
 
 ```sh
+# Fedora
 sudo dnf install -y nodejs dtc SDL-devel SDL2 pixman glib2 uv
-uv tool install pebble-tool --python 3.13
+# Arch
+sudo pacman -S --needed nodejs npm sdl2-compat glib2 pixman zlib libpng sndio uv
+
+uv tool install pebble-tool --python 3.13   # 3.14 is not supported yet
 pebble sdk install latest
 ```
+
+Verified with pebble-tool 5.0.40 and SDK 4.33.1.
 
 **Run it**:
 
@@ -91,7 +97,7 @@ uv run uvicorn app.main:app --port 8000
 cd pebble
 npm install              # one-off: pulls pebble-clay
 pebble build
-pebble install --emulator basalt     # or chalk / diorite / emery
+pebble install --emulator emery      # or basalt / diorite / chalk
 
 # open the Clay config in your browser, fill in:
 #   Base URL     http://localhost:8000
@@ -102,7 +108,7 @@ pebble emu-app-config
 # First launch will have already failed with "Open Settings to configure
 # proxy"; long-press Select on the emulator (or re-install) to retry now
 # that config is saved.
-pebble logs --emulator basalt        # tail APP_LOG + companion output
+pebble logs --emulator emery         # tail APP_LOG + companion output
 ```
 
 **Exercise a scenario** (time-evolving demo):

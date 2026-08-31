@@ -3,7 +3,10 @@
 #include <pebble.h>
 
 #define MAX_VEHICLES 4
-#define VEHICLE_ID_LEN 24
+// Kia vehicle ids are 36-char UUIDs. The demo source used short ids
+// ("pv5-demo"), so a smaller buffer silently truncated the id and the
+// watch then asked the proxy for a vehicle that doesn't exist.
+#define VEHICLE_ID_LEN 40
 #define VEHICLE_NICK_LEN 16
 #define APP_ERROR_LEN 96
 

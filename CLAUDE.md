@@ -87,6 +87,24 @@ Guardrails:
   claimed. Prefer `pacman` for anything system-level. The Pi that
   actually hosts the proxy is a separate box.
 
+## Installing the Pebble SDK
+
+Pebble is a going concern again — Core Devices sells the hardware and
+maintains the SDK, and the modern tool runs on Python 3, so none of the
+old Python-2.7 contortions apply. Official docs: developer.repebble.com/sdk.
+
+```sh
+uv tool install pebble-tool --python 3.13   # 3.14 is not supported yet
+pebble sdk install latest                   # ~240 MB, includes the ARM toolchain
+pebble sdk list                             # confirm one is marked (active)
+cd pebble && npm install                    # pebble-clay, needed for the JS bundle
+pebble build                                # builds all four targetPlatforms
+```
+
+Verified on this Arch box with pebble-tool 5.0.40 and SDK 4.33.1. Every
+emulator runtime dependency (sdl2, glib2, pixman, zlib, libpng, sndio)
+was already installed; pacman was not needed at all.
+
 ## Testing end-to-end in the emulator
 
 Interactive path: `pebble emu-app-config` opens the Clay config page in
@@ -94,28 +112,35 @@ the host browser. Fill in URL + token, Save, and the emulator's
 localStorage picks up the values.
 
 Scripted path (for headless testing — no browser): pypkjs stores
-`localStorage` as a `dbm.dumb` database under
-`~/.pebble-sdk/*/basalt/localstorage/<uuid>`. The uuid-specific files
-are created the first time the app runs, so `pebble install --emulator
-basalt` must happen at least once before the preload. Then:
+`localStorage` as a `dbm.dumb` database, one directory per platform, at
+`~/.local/share/pebble-sdk/<sdk-version>/<platform>/localstorage/<uuid>`.
+That is **not** the legacy `~/.pebble-sdk` path — the modern tool only
+uses that if it already exists. The directory may not exist until that
+platform has been run, so create it rather than globbing for it:
 
 ```sh
-python3 - <<'PY'
-import dbm.dumb, json, pathlib
+PLATFORM=emery
+mkdir -p ~/.local/share/pebble-sdk/*/$PLATFORM/localstorage
+python3 - "$PLATFORM" <<'PY'
+import dbm.dumb, glob, json, os, pathlib, sys
+plat = sys.argv[1]
 uuid = '5b7e9a12-3c4d-4e8f-9a1b-2c3d4e5f6a7b'
-ls = next((pathlib.Path.home() / '.pebble-sdk').glob('*/basalt/localstorage'))
-db = dbm.dumb.open(str(ls / uuid), 'c')
+ls = glob.glob(os.path.expanduser(
+    '~/.local/share/pebble-sdk/*/' + plat + '/localstorage'))[0]
+db = dbm.dumb.open(str(pathlib.Path(ls) / uuid), 'c')
 db['clay-settings'] = json.dumps({
     'PROXY_URL': 'http://localhost:8000',
     'PROXY_TOKEN': 'testtoken123',
+    'UNIT_MILES': True,
 })
 db.close()
 PY
-pebble install --emulator basalt     # reinstall to reload localStorage
+pebble install --emulator $PLATFORM   # reinstall to reload localStorage
+pebble screenshot --emulator $PLATFORM --no-open shot.png
 ```
 
 Start the proxy with a matching `PROXY_BEARER_TOKEN` and watch `pebble
-logs --emulator basalt`. The companion prints `[kia] req …` lines and
+logs --emulator $PLATFORM`. The companion prints `[kia] req …` lines and
 errors surface as `ERR` top-right plus a readable message at the bottom
 of the main screen.
 
@@ -135,9 +160,10 @@ valid `action` plus at least one button and it's fine. Valid actions are
 
 ## Working on the watchapp
 
-The Pebble SDK is almost certainly not installed in the sandbox, so you
-cannot `pebble build` to verify compilation. Be meticulous reading the
-SDK docs rather than guessing API shapes. Known gotchas:
+The SDK is installed (see above), so **build before claiming anything
+compiles**. `pebble build` covers all four platforms in about a minute,
+and `pebble install --emulator emery` plus `pebble screenshot` shows what
+it actually looks like. Known gotchas:
 
 - Never call `window_destroy` inside a window's `unload` handler — it
   recurses. Pattern: destroy child layers in unload, destroy the window
@@ -155,6 +181,13 @@ SDK docs rather than guessing API shapes. Known gotchas:
   hard-coding pixel constants; that is what keeps all four working.
 - `app_state_subscribe` dedupes by function pointer, so it's safe to
   call on each window load.
+- Real Kia vehicle ids are 36-char UUIDs. `VEHICLE_ID_LEN` must stay
+  large enough for one; the demo source's short ids (`pv5-demo`) hid a
+  truncation bug that only appeared against the live account.
+- Measured free heap with the current app: emery 123 KB of 128 KB,
+  basalt/diorite/chalk ~58 KB of 64 KB. The app itself is about 7.6 KB,
+  so there is a lot of room — the old "24 KB" figure in these docs was
+  aplite's, and aplite is not a target.
 
 ## Git and commits
 
