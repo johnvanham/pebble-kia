@@ -17,6 +17,15 @@
         "odo_km": 3421,
         "aux_battery_pct": 83,
         "is_climate_on": false,
+        "charge_limit_ac": 80,
+        "charge_limit_dc": 100,
+        "doors_open": 0,
+        "windows_open": 0,
+        "trunk_open": false,
+        "hood_open": false,
+        "sunroof_open": false,
+        "efficiency_kmpkwh": 5.1,
+        "batt_temp_c": 15,
         "updated_at": "-2m"
       }
     },
@@ -37,6 +46,15 @@
         "odo_km": 18734,
         "aux_battery_pct": 88,
         "is_climate_on": false,
+        "charge_limit_ac": 80,
+        "charge_limit_dc": 90,
+        "doors_open": 0,
+        "windows_open": 1,
+        "trunk_open": false,
+        "hood_open": false,
+        "sunroof_open": false,
+        "efficiency_kmpkwh": 4.3,
+        "batt_temp_c": 22,
         "updated_at": "-17m"
       }
     }

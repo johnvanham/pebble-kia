@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.cache import StatusCache
+from app.cache import CommandThrottle, StatusCache
 from app.models import VehicleStatus
 
 
@@ -249,6 +249,38 @@ def test_warm_does_not_count_as_a_forced_fetch(clock):
 
     assert forced is True
     assert fetch.calls == [True]
+
+
+def test_command_throttle_allows_the_first_command(clock):
+    throttle = CommandThrottle(min_interval_seconds=10)
+
+    assert throttle.seconds_until_allowed("v1") == 0.0
+
+
+def test_command_throttle_blocks_inside_the_window(clock):
+    throttle = CommandThrottle(min_interval_seconds=10)
+
+    throttle.stamp("v1")
+    clock.advance(4)
+
+    assert throttle.seconds_until_allowed("v1") == pytest.approx(6.0)
+
+
+def test_command_throttle_expires(clock):
+    throttle = CommandThrottle(min_interval_seconds=10)
+
+    throttle.stamp("v1")
+    clock.advance(10)
+
+    assert throttle.seconds_until_allowed("v1") == 0.0
+
+
+def test_command_throttle_is_per_vehicle(clock):
+    throttle = CommandThrottle(min_interval_seconds=10)
+
+    throttle.stamp("v1")
+
+    assert throttle.seconds_until_allowed("v2") == 0.0
 
 
 def test_on_store_fires_only_on_real_fetches(clock):

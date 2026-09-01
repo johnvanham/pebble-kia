@@ -13,6 +13,31 @@ class CacheEntry:
     wall_fetched_at: float  # time.time() seconds since epoch
 
 
+class CommandThrottle:
+    """Floor between remote commands, per vehicle.
+
+    Success-stamped like the force floor: the caller checks, sends the
+    command, and stamps only when the send worked, so a failed send
+    doesn't lock out the retry.
+    """
+
+    def __init__(self, min_interval_seconds: int) -> None:
+        self.min_interval = min_interval_seconds
+        self._last_at: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def seconds_until_allowed(self, vehicle_id: str) -> float:
+        with self._lock:
+            last = self._last_at.get(vehicle_id)
+        if last is None:
+            return 0.0
+        return max(0.0, self.min_interval - (time.monotonic() - last))
+
+    def stamp(self, vehicle_id: str) -> None:
+        with self._lock:
+            self._last_at[vehicle_id] = time.monotonic()
+
+
 class StatusCache:
     def __init__(
         self,

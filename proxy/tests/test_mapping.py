@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.sources.live import map_status
 
 
@@ -26,6 +28,21 @@ class StubVehicle:
     air_control_is_on = None
     last_updated_at = None
     last_scanned_at = None
+    ev_charge_limits_ac = None
+    ev_charge_limits_dc = None
+    front_left_door_is_open = None
+    front_right_door_is_open = None
+    back_left_door_is_open = None
+    back_right_door_is_open = None
+    front_left_window_is_open = None
+    front_right_window_is_open = None
+    back_left_window_is_open = None
+    back_right_window_is_open = None
+    trunk_is_open = None
+    hood_is_open = None
+    ev_battery_temperature_max = None
+    ev_battery_temperature_max_unit = None
+    data = None
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
@@ -52,6 +69,18 @@ def metric_charging(**overrides) -> StubVehicle:
         car_battery_percentage=83,
         air_control_is_on=False,
         last_updated_at=UPDATED,
+        ev_charge_limits_ac=80,
+        ev_charge_limits_dc=100,
+        ev_battery_temperature_max=15,
+        ev_battery_temperature_max_unit="°C",
+        # Raw values off the owner's real PV5 dump: sunroof closed reads
+        # 2, and economy unit 6 is mi/kWh.
+        data={
+            "Body": {"Sunroof": {"Glass": {"Open": 2}}},
+            "Drivetrain": {"FuelSystem": {
+                "AverageFuelEconomy": {"Drive": 3.2, "Unit": 6},
+            }},
+        },
     )
     fields.update(overrides)
     return StubVehicle(**fields)
@@ -71,6 +100,15 @@ def test_nominal_charging():
     assert status.odo_km == 1234
     assert status.aux_battery_pct == 83
     assert status.is_climate_on is False
+    assert status.charge_limit_ac == 80
+    assert status.charge_limit_dc == 100
+    assert status.doors_open == 0
+    assert status.windows_open == 0
+    assert status.trunk_open is False
+    assert status.hood_open is False
+    assert status.sunroof_open is False
+    assert status.efficiency_kmpkwh == pytest.approx(5.15, abs=0.01)
+    assert status.batt_temp_c == 15
     assert status.updated_at == UPDATED
 
 
@@ -118,6 +156,15 @@ def test_sleeping_car_still_renders():
     assert status.doors_locked is False
     assert status.odo_km == 0
     assert status.aux_battery_pct == 0
+    assert status.charge_limit_ac == 0
+    assert status.charge_limit_dc == 0
+    assert status.doors_open == 0
+    assert status.windows_open == 0
+    assert status.trunk_open is False
+    assert status.hood_open is False
+    assert status.sunroof_open is False
+    assert status.efficiency_kmpkwh == 0.0
+    assert status.batt_temp_c is None
     assert status.updated_at is not None
 
 
@@ -157,3 +204,75 @@ def test_plug_ac_when_plugged_but_not_drawing():
 
 def test_v2l_discharge_does_not_produce_negative_power():
     assert map_status(metric_charging(ev_charging_power=-1.2)).charge_kw == 0.0
+
+
+def test_open_body_parts_are_counted():
+    # The library mixes bools and raw 0/1 ints across these fields;
+    # both must count.
+    status = map_status(metric_charging(
+        front_left_door_is_open=1,
+        back_right_door_is_open=True,
+        front_left_window_is_open=True,
+        trunk_is_open=1,
+        hood_is_open=True,
+    ))
+
+    assert status.doors_open == 2
+    assert status.windows_open == 1
+    assert status.trunk_open is True
+    assert status.hood_open is True
+
+
+def test_sunroof_raw_value_2_reads_closed():
+    # The library's sunroof_is_open truthies Body.Sunroof.Glass.Open,
+    # which is 2 on the owner's PV5 while closed. Only 1 means open.
+    status = map_status(metric_charging(
+        data={"Body": {"Sunroof": {"Glass": {"Open": 2}}}},
+    ))
+
+    assert status.sunroof_open is False
+
+
+def test_sunroof_raw_value_1_reads_open():
+    status = map_status(metric_charging(
+        data={"Body": {"Sunroof": {"Glass": {"Open": 1}}}},
+    ))
+
+    assert status.sunroof_open is True
+
+
+def test_a_car_without_a_sunroof_node_reads_closed():
+    assert map_status(metric_charging(data={"Body": {}})).sunroof_open is False
+
+
+def test_efficiency_in_mi_per_kwh_normalises_to_km():
+    status = map_status(metric_charging(data={
+        "Drivetrain": {"FuelSystem": {
+            "AverageFuelEconomy": {"Drive": 3.2, "Unit": 6},
+        }},
+    }))
+
+    assert status.efficiency_kmpkwh == pytest.approx(3.2 * 1.609344)
+
+
+def test_efficiency_in_other_units_passes_through():
+    status = map_status(metric_charging(data={
+        "Drivetrain": {"FuelSystem": {
+            "AverageFuelEconomy": {"Drive": 5.0, "Unit": 1},
+        }},
+    }))
+
+    assert status.efficiency_kmpkwh == 5.0
+
+
+def test_efficiency_defaults_when_the_node_is_absent():
+    assert map_status(metric_charging(data={})).efficiency_kmpkwh == 0.0
+
+
+def test_battery_temperature_in_fahrenheit_normalises():
+    status = map_status(metric_charging(
+        ev_battery_temperature_max=59,
+        ev_battery_temperature_max_unit="°F",
+    ))
+
+    assert status.batt_temp_c == 15

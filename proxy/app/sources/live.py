@@ -11,7 +11,7 @@ import logging
 import threading
 from datetime import datetime, timezone
 
-from hyundai_kia_connect_api import Token, VehicleManager
+from hyundai_kia_connect_api import ClimateRequestOptions, Token, VehicleManager
 from hyundai_kia_connect_api.Vehicle import Vehicle as KiaVehicle
 from hyundai_kia_connect_api.const import LENGTH_MILES, TEMPERATURE_F
 from hyundai_kia_connect_api.exceptions import (
@@ -19,6 +19,7 @@ from hyundai_kia_connect_api.exceptions import (
     AuthenticationOTPRequired,
     ConsentRequiredError,
 )
+from hyundai_kia_connect_api.utils import get_child_value
 
 from ..config import Settings
 from ..models import PlugState, Vehicle, VehicleStatus
@@ -28,6 +29,25 @@ from .base import VehicleNotFound
 log = logging.getLogger(__name__)
 
 MILES_TO_KM = 1.609344
+
+# Raw unit code in Drivetrain.FuelSystem.AverageFuelEconomy.Unit. 6 is
+# what this account reports with the head unit set to miles, i.e.
+# mi/kWh; anything else is taken as already km/kWh, mirroring how
+# ev_driving_range_unit is handled.
+ECONOMY_UNIT_MILES = 6
+
+_DOOR_OPEN_FIELDS = (
+    "front_left_door_is_open",
+    "front_right_door_is_open",
+    "back_left_door_is_open",
+    "back_right_door_is_open",
+)
+_WINDOW_OPEN_FIELDS = (
+    "front_left_window_is_open",
+    "front_right_window_is_open",
+    "back_left_window_is_open",
+    "back_right_window_is_open",
+)
 
 # Above this the charge can only be DC. See _derive_plug().
 AC_MAX_KW = 15.0
@@ -58,6 +78,12 @@ def _to_celsius(value: float | None, unit: str | None, field: str) -> int:
         return 0
     c = (value - 32) * 5 / 9 if unit == TEMPERATURE_F else value
     return round(c)
+
+
+def _count_open(vehicle: KiaVehicle, fields: tuple[str, ...]) -> int:
+    # None and 0 both mean "not open"; a car that never reported a
+    # field shouldn't count as ajar.
+    return sum(bool(getattr(vehicle, field)) for field in fields)
 
 
 def _derive_plug(vehicle: KiaVehicle) -> PlugState:
@@ -133,6 +159,31 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
         _missing("last_updated_at")
         updated_at = datetime.now(timezone.utc)
 
+    data = vehicle.data or {}
+
+    # The library's sunroof_is_open truthies the raw CCS2 value, and
+    # Body.Sunroof.Glass.Open reads 2 on this PV5 while the sunroof is
+    # closed — so the accessor claims open on a closed roof. Only 1
+    # means open; read the raw node instead. get_child_value returns
+    # None wherever the node is absent, so a sunroof-less car reads
+    # closed.
+    sunroof_open = get_child_value(data, "Body.Sunroof.Glass.Open") == 1
+
+    # AverageFuelEconomy has no library accessor, so it comes straight
+    # from the raw payload, normalised to km/kWh like every distance.
+    eff = get_child_value(
+        data, "Drivetrain.FuelSystem.AverageFuelEconomy.Drive"
+    )
+    if eff is None:
+        efficiency = 0.0
+    else:
+        eff_unit = get_child_value(
+            data, "Drivetrain.FuelSystem.AverageFuelEconomy.Unit"
+        )
+        efficiency = float(eff) * (
+            MILES_TO_KM if eff_unit == ECONOMY_UNIT_MILES else 1.0
+        )
+
     return VehicleStatus(
         soc_pct=min(100, max(0, round(soc))),
         range_km=_to_km(
@@ -159,6 +210,22 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
         odo_km=_to_km(vehicle.odometer, vehicle.odometer_unit, "odometer"),
         aux_battery_pct=min(100, max(0, round(aux))),
         is_climate_on=bool(climate),
+        charge_limit_ac=min(100, max(0, vehicle.ev_charge_limits_ac or 0)),
+        charge_limit_dc=min(100, max(0, vehicle.ev_charge_limits_dc or 0)),
+        doors_open=_count_open(vehicle, _DOOR_OPEN_FIELDS),
+        windows_open=_count_open(vehicle, _WINDOW_OPEN_FIELDS),
+        trunk_open=bool(vehicle.trunk_is_open),
+        hood_open=bool(vehicle.hood_is_open),
+        sunroof_open=sunroof_open,
+        efficiency_kmpkwh=efficiency,
+        # None stays None: 0 C is a real reading, so a car that reports
+        # no pack temperature must not be dressed up as a freezing one.
+        batt_temp_c=None if vehicle.ev_battery_temperature_max is None
+        else _to_celsius(
+            vehicle.ev_battery_temperature_max,
+            vehicle.ev_battery_temperature_max_unit,
+            "ev_battery_temperature_max",
+        ),
         updated_at=updated_at,
     )
 
@@ -194,6 +261,35 @@ class LiveDataSource:
             else:
                 vm.update_vehicle_with_cached_state(vehicle_id)
             return map_status(vm.vehicles[vehicle_id])
+
+    def perform_action(self, vehicle_id: str, action: str) -> None:
+        with self._lock:
+            vm = self._manager()
+            if vehicle_id not in vm.vehicles:
+                raise VehicleNotFound(vehicle_id)
+            if action == "start_climate":
+                # Fixed preset: the watch has no UI for picking a
+                # temperature, and 21°C for 10 minutes is a sensible
+                # pre-departure warm-up/cool-down either way.
+                vm.start_climate(
+                    vehicle_id,
+                    ClimateRequestOptions(set_temp=21.0, duration=10),
+                )
+                return
+            method = {
+                "lock": vm.lock,
+                "unlock": vm.unlock,
+                "start_charge": vm.start_charge,
+                "stop_charge": vm.stop_charge,
+                "stop_climate": vm.stop_climate,
+                "open_charge_port": vm.open_charge_port,
+                "close_charge_port": vm.close_charge_port,
+                "start_valet": vm.start_valet_mode,
+                "stop_valet": vm.stop_valet_mode,
+            }.get(action)
+            if method is None:
+                raise ValueError(f"unknown action: {action}")
+            method(vehicle_id)
 
     def _manager(self) -> VehicleManager:
         if self._vm is None:

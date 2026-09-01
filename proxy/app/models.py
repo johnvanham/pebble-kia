@@ -33,7 +33,27 @@ class VehicleStatus(BaseModel):
     # is working.
     aux_battery_pct: int = Field(..., ge=0, le=100)
     is_climate_on: bool = False
+    # Everything below defaults harmlessly so demo and scenario files
+    # written before these fields existed keep loading.
+    charge_limit_ac: int = Field(0, ge=0, le=100)
+    charge_limit_dc: int = Field(0, ge=0, le=100)
+    doors_open: int = Field(0, ge=0, le=4)
+    windows_open: int = Field(0, ge=0, le=4)
+    trunk_open: bool = False
+    hood_open: bool = False
+    sunroof_open: bool = False
+    efficiency_kmpkwh: float = Field(0.0, ge=0)
+    # None means "not reported" — unlike the other zero-defaulted
+    # fields, 0 is a reading a real battery can give, so absence needs
+    # its own encoding all the way to the watch (which renders "--").
+    batt_temp_c: int | None = None
     updated_at: datetime
+
+
+class ActionResponse(BaseModel):
+    id: str
+    action: str
+    status: Literal["sent"] = "sent"
 
 
 class StatusResponse(BaseModel):

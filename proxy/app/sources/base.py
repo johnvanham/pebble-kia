@@ -9,6 +9,22 @@ class VehicleNotFound(Exception):
         self.vehicle_id = vehicle_id
 
 
+# Every remote command the proxy can relay. The name is the wire
+# contract — identical on the watch, in the companion, and in the URL.
+ACTIONS = (
+    "lock",
+    "unlock",
+    "start_charge",
+    "stop_charge",
+    "start_climate",
+    "stop_climate",
+    "open_charge_port",
+    "close_charge_port",
+    "start_valet",
+    "stop_valet",
+)
+
+
 class DataSource(Protocol):
     name: str
 
@@ -19,3 +35,7 @@ class DataSource(Protocol):
     def fetch_status(
         self, vehicle_id: str, *, force: bool = False
     ) -> VehicleStatus: ...
+
+    # Raises VehicleNotFound for an unknown vehicle and ValueError for
+    # an action not in ACTIONS.
+    def perform_action(self, vehicle_id: str, action: str) -> None: ...

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..models import Vehicle, VehicleStatus
-from .base import VehicleNotFound
+from .base import ACTIONS, VehicleNotFound
 
 _REL = re.compile(r"^-\s*(\d+)\s*([smhd])$")
 
@@ -85,6 +85,10 @@ class DemoDataSource:
         # Monotonic start so scenario time is restart-fresh and immune
         # to wall-clock jumps.
         self._scenario_start_mono = time.monotonic()
+        # Remote-command consequences, merged over whatever the file or
+        # scenario produces on every subsequent fetch. In memory only —
+        # the demo file is never written.
+        self._overrides: dict[str, dict] = {}
 
     def _load(self) -> dict:
         # Re-read on every call so edits to the file surface on the next
@@ -104,16 +108,42 @@ class DemoDataSource:
                 continue
             scenario = (data.get("scenario") or {}).get("vehicles", {}).get(vehicle_id)
             if scenario is not None:
-                return _evaluate_scenario(
+                status = _evaluate_scenario(
                     baseline=scenario["baseline"],
                     events=scenario.get("events", []),
                     loop_seconds=data["scenario"].get("loop_seconds", 3600),
                     scenario_start_mono=self._scenario_start_mono,
                 )
-            payload = dict(v["status"])
-            payload["updated_at"] = _resolve_updated_at(payload.get("updated_at"))
-            return VehicleStatus(**payload)
+            else:
+                payload = dict(v["status"])
+                payload["updated_at"] = _resolve_updated_at(payload.get("updated_at"))
+                status = VehicleStatus(**payload)
+            overrides = self._overrides.get(vehicle_id)
+            if overrides:
+                status = status.model_copy(update=overrides)
+            return status
         raise VehicleNotFound(vehicle_id)
+
+    def perform_action(self, vehicle_id: str, action: str) -> None:
+        if action not in ACTIONS:
+            raise ValueError(f"unknown action: {action}")
+        # Validates the vehicle id and gives the current plug state.
+        current = self.fetch_status(vehicle_id)
+        over = self._overrides.setdefault(vehicle_id, {})
+        if action in ("lock", "unlock"):
+            over["doors_locked"] = action == "lock"
+        elif action == "start_charge":
+            over["is_charging"] = True
+            over["charge_kw"] = 7.4
+            if current.plug == "unplugged":
+                over["plug"] = "ac"
+        elif action == "stop_charge":
+            over["is_charging"] = False
+            over["charge_kw"] = 0.0
+        elif action in ("start_climate", "stop_climate"):
+            over["is_climate_on"] = action == "start_climate"
+        # Charge-port and valet actions succeed with no visible change:
+        # the status model carries no field for either.
 
     def has_scenario(self) -> bool:
         try:

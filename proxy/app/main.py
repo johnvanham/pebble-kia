@@ -1,4 +1,5 @@
 import logging
+import math
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -17,12 +18,12 @@ from hyundai_kia_connect_api.exceptions import (
 )
 
 from .auth import verify_bearer
-from .cache import StatusCache
+from .cache import CommandThrottle, StatusCache
 from .config import Settings, configure_logging, detector_interval, load_settings
 from .detector import TransitionDetector
-from .models import StatusResponse, VehicleList, VehicleStatus
+from .models import ActionResponse, StatusResponse, VehicleList, VehicleStatus
 from .notifier import Notifier, NtfyNotifier, NullNotifier
-from .sources.base import DataSource, VehicleNotFound
+from .sources.base import ACTIONS, DataSource, VehicleNotFound
 from .sources.demo import DemoDataSource
 from .sources.live import LiveDataSource
 from .setup_qr import emit_setup_qr
@@ -68,6 +69,7 @@ async def lifespan(app: FastAPI):
         on_store=store.save_status,
     )
     cache.warm(store.load_statuses())
+    app.state.command_throttle = CommandThrottle(settings.command_min_seconds)
     app.state.notifier = _build_notifier(settings)
 
     # Kick off the transition detector against whatever vehicles the
@@ -158,6 +160,45 @@ def get_status(vehicle_id: str, force: int = 0, fresh: int = 0):
           dependencies=[Depends(verify_bearer)])
 def refresh_status(vehicle_id: str):
     return _status(vehicle_id, True)
+
+
+# Remote commands mutate the vehicle, so they are opt-in
+# (ENABLE_COMMANDS) and endpoint-only: nothing in this codebase may
+# fire an action except this handler serving an explicit client
+# request. No timer, no detector hook, ever.
+@app.post("/vehicles/{vehicle_id}/actions/{action}",
+          response_model=ActionResponse,
+          dependencies=[Depends(verify_bearer)])
+def perform_action(vehicle_id: str, action: str):
+    settings: Settings = app.state.settings
+    if not settings.enable_commands:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Commands disabled - set ENABLE_COMMANDS=1 on the proxy",
+        )
+    if action not in ACTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"unknown action: {action} (valid: {', '.join(ACTIONS)})",
+        )
+    throttle: CommandThrottle = app.state.command_throttle
+    wait = throttle.seconds_until_allowed(vehicle_id)
+    if wait > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"too soon after the last command - retry in {math.ceil(wait)}s",
+        )
+    try:
+        app.state.source.perform_action(vehicle_id, action)
+    except VehicleNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"vehicle not found: {vehicle_id}",
+        )
+    # Stamped on success only, like the force floor, so a send Kia
+    # rejected doesn't lock out the retry.
+    throttle.stamp(vehicle_id)
+    return ActionResponse(id=vehicle_id, action=action)
 
 
 def _cached_status(vehicle_id: str) -> VehicleStatus:

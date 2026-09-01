@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     # is downgraded to a cached read rather than rejected, so the watch
     # never surfaces an error for pressing the button too eagerly.
     live_force_min_seconds: int = Field(900, alias="LIVE_FORCE_MIN_SECONDS")
+    # Remote commands. The proxy is read-only unless this is set — the
+    # actions endpoint answers 403. Deliberately opt-in: commands are a
+    # separate risk surface from reads, and a forked deployment should
+    # have to choose them.
+    enable_commands: bool = Field(False, alias="ENABLE_COMMANDS")
+    # Floor between remote commands per vehicle. Unlike the force
+    # floor there is no cached equivalent to downgrade to, so a command
+    # inside the window is refused with 429 rather than absorbed.
+    command_min_seconds: int = Field(10, alias="COMMAND_MIN_SECONDS")
     # Transition detector. Runs as a background asyncio task and fires
     # ntfy pushes on state changes. Unset means per-source defaults:
     # DEMO_DETECTOR_SECONDS keeps scenario progression visible, while

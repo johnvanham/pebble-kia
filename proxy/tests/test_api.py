@@ -63,6 +63,42 @@ def test_status_returns_a_full_payload(client):
         assert field in body["status"]
 
 
+def test_status_carries_the_body_and_efficiency_fields(client):
+    body = client.get("/vehicles/pv5-demo/status", headers=auth()).json()["status"]
+    assert body["charge_limit_ac"] == 80
+    assert body["charge_limit_dc"] == 100
+    assert body["doors_open"] == 0
+    assert body["windows_open"] == 0
+    assert body["trunk_open"] is False
+    assert body["hood_open"] is False
+    assert body["sunroof_open"] is False
+    assert body["efficiency_kmpkwh"] == 5.1
+    assert body["batt_temp_c"] == 15
+
+
+def test_the_ev9_demo_exercises_the_open_window_row(client):
+    body = client.get("/vehicles/ev9-demo/status", headers=auth()).json()["status"]
+    assert body["windows_open"] == 1
+    assert body["batt_temp_c"] == 22
+
+
+def test_scenario_files_predating_the_new_fields_still_load():
+    from app.sources.demo import DemoDataSource
+
+    paths = sorted((PROXY_DIR / "scenarios").glob("*.json"))
+    assert paths
+    for path in paths:
+        source = DemoDataSource(path)
+        for vehicle in source.list_vehicles():
+            status = source.fetch_status(vehicle.id)
+            assert status.charge_limit_ac == 0
+            assert status.doors_open == 0
+            assert status.windows_open == 0
+            assert status.sunroof_open is False
+            assert status.efficiency_kmpkwh == 0.0
+            assert status.batt_temp_c is None
+
+
 def test_second_status_is_served_from_cache(client):
     client.get("/vehicles/pv5-demo/status", headers=auth())
     r = client.get("/vehicles/pv5-demo/status", headers=auth())
