@@ -247,12 +247,17 @@ static void on_state_changed(void) {
   else spinner_stop();
 }
 
+// With one vehicle, switching is a no-op but the status request would
+// still fire and flash the spinner — a phantom refresh. So the buttons
+// only do anything when there is something to switch between.
 static void up_click(ClickRecognizerRef ref, void *ctx) {
+  if (app_state_vehicle_count() < 2) return;
   app_state_prev_vehicle();
   ipc_request_current_status();
 }
 
 static void down_click(ClickRecognizerRef ref, void *ctx) {
+  if (app_state_vehicle_count() < 2) return;
   app_state_next_vehicle();
   ipc_request_current_status();
 }
@@ -261,7 +266,7 @@ static void select_click(ClickRecognizerRef ref, void *ctx) {
   if (app_state_current_vehicle()) ui_detail_push();
 }
 
-static void select_long_click(ClickRecognizerRef ref, void *ctx) {
+static void force_refresh(void) {
   const Vehicle *v = app_state_current_vehicle();
   if (!v) {
     ipc_request_list();
@@ -270,6 +275,38 @@ static void select_long_click(ClickRecognizerRef ref, void *ctx) {
   vibes_short_pulse();
   ipc_request_status(v->id, true);
 }
+
+static void select_long_click(ClickRecognizerRef ref, void *ctx) {
+  force_refresh();
+}
+
+// Touch gestures: pull down to force-refresh, swipe left for detail,
+// swipe right to quit. Only emery's headers declare the real
+// recognizer API — the other platforms stub the functions out as
+// no-op macros, so this whole block compiles only where it can work.
+#if PBL_API_EXISTS(window_attach_recognizer)
+static void pan_event(const Recognizer *recognizer, RecognizerEvent event) {
+  if (event != RecognizerEvent_Completed) return;
+  GRect b = layer_get_bounds(window_get_root_layer(s_window));
+  if (pan_recognizer_get_total_delta(recognizer).y < b.size.h / 4) return;
+  force_refresh();
+}
+
+static void swipe_event(const Recognizer *recognizer, RecognizerEvent event) {
+  if (event != RecognizerEvent_Completed) return;
+  switch (swipe_recognizer_get_direction(recognizer)) {
+    case SwipeDirection_Left:
+      if (app_state_current_vehicle()) ui_detail_push();
+      break;
+    case SwipeDirection_Right:
+      // Pop everything so app_event_loop returns: swipe-right quits.
+      window_stack_pop_all(true);
+      break;
+    default:
+      break;
+  }
+}
+#endif
 
 static void click_config(void *context) {
   window_single_click_subscribe(BUTTON_ID_UP, up_click);
@@ -284,6 +321,20 @@ static void window_load(Window *window) {
   s_canvas = layer_create(bounds);
   layer_set_update_proc(s_canvas, canvas_update);
   layer_add_child(root, s_canvas);
+
+#if PBL_API_EXISTS(window_attach_recognizer)
+  // The window owns these recognizers and destroys them on unload, so
+  // each load attaches fresh ones — not a leak. Disabling the touch
+  // bridge opts out of the system recognizer set so ours get the
+  // touch stream.
+  window_set_touch_bridge_disabled(window, true);
+  window_attach_recognizer(
+      window, pan_recognizer_create(pan_event, NULL, PanAxis_Vertical));
+  window_attach_recognizer(
+      window, swipe_recognizer_create(
+                  swipe_event, NULL,
+                  SwipeDirection_Left | SwipeDirection_Right));
+#endif
 
   app_state_subscribe(on_state_changed);
 }

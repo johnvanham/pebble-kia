@@ -124,9 +124,14 @@ static void inbox_received(DictionaryIterator *in, void *ctx) {
   } else if (strcmp(kind, "status") == 0) {
     handle_status(in);
   } else if (strcmp(kind, "ready") == 0) {
-    // Companion connected; trigger the deferred initial fetch. Restored
-    // vehicles still need it — flash only saved us the blank screen.
+    // Companion (re)connected. The first ready triggers the deferred
+    // initial fetch — restored vehicles still need it, flash only saved
+    // us the blank screen. A ready arriving after the list is in hand
+    // means the companion restarted and forgot which vehicle its poll
+    // loop should watch, so re-seed it with an ordinary status request;
+    // otherwise polling stays dead until the user forces a refresh.
     if (app_state_phase() != APP_PHASE_READY) ipc_request_list();
+    else ipc_request_current_status();
   } else if (strcmp(kind, "error") == 0) {
     app_state_set_error("phone error");
   }

@@ -17,11 +17,19 @@ static void minute_tick(struct tm *t, TimeUnits units) {
 
 static void init(void) {
   app_state_init();
+#if PBL_API_EXISTS(app_touch_navigation_enable)
+  // Third-party apps get no touch input at all until they opt in.
+  // Opting in feeds the windows' own recognizers; each window also
+  // disables the system touch bridge so gestures reach them instead
+  // of being synthesized into button presses.
+  app_touch_navigation_enable(true);
+#endif
   ipc_init();
   tick_timer_service_subscribe(MINUTE_UNIT, minute_tick);
   ui_main_push();
   // Fetch kicks off when the companion sends its "ready" nudge. If the
-  // phone is unreachable, the user hits select-long-press to retry.
+  // phone is unreachable, the user retries with select-long-press (or
+  // a pull-down on a touchscreen watch).
 }
 
 static void deinit(void) {
