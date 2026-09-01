@@ -134,7 +134,7 @@ Target layout: the proxy runs in a container on a home server, reachable
 at an HTTPS URL via a reverse proxy that owns TLS (Caddy is the default
 here; the author's Raspberry Pi already runs it with automatic Let's
 Encrypt). The watchapp is sideloaded onto a Pebble paired with the
-Rebble Pebble mobile app.
+official Core Devices mobile app.
 
 ### 1. Deploy the proxy
 
@@ -264,44 +264,120 @@ pebble build
 
 #### On a physical watch
 
-1. Install the Rebble Pebble mobile app (https://rebble.io/download)
-   and pair your watch — the app replaces Pebble Inc's long-defunct one
-   and talks to the Rebble Web Services token endpoint for login.
-2. In the mobile app, open Settings → Developer → enable **Developer
-   Connection**. Note the watch's IP, which the app displays.
-3. From the workstation (on the same LAN as the phone):
+These steps are for a Pebble Time 2 (or Pebble 2 Duo) — Core Devices
+hardware. They have not been run end to end on a watch yet; the build and
+the emulator path have. Corrections welcome.
+
+**Use the official Core Devices app, not the Rebble one.** Rebble does not
+publish a companion app — what `rebble.io/apk` distributes is the 2016
+Pebble Technology APK, which Rebble's own help centre describes as no
+longer maintained. The app you want is **"Pebble" by Core Devices**
+(package `coredevices.coreapp`), on Google Play or via
+https://repebble.com/app.
+
+1. **Uninstall the legacy app first if you have it.** Core Devices'
+   support docs are explicit that pairing breaks with both installed:
+   "You won't be able to pair or use any watches with both the old and
+   new apps installed simultaneously."
+2. Install "Pebble" by Core Devices and pair the watch. The Devices tab
+   should show it connected.
+3. Build the bundle. One `.pbw` carries every platform, so the same file
+   installs on emery, basalt, diorite and chalk:
 
    ```sh
    cd pebble
-   pebble install --phone <WATCH_IP>
+   npm install        # first time only
+   pebble build
    ```
 
-   The watch vibrates when the install lands. The Kia app then appears
-   in the mobile app's locker and on the watch's app launcher.
+Then pick a transport. All three are supported by `pebble install`; the
+first needs the least setup.
 
-Alternatively, share the `pebble/build/pebble.pbw` file to the Rebble
-app via the OS share sheet — that sideload path works without the
-`pebble` CLI at the cost of not being scriptable.
+**Over USB with adb** — nothing to toggle in the phone's UI:
+
+```sh
+sudo pacman -S android-tools        # or your distro's platform-tools
+adb devices                         # phone must show as "device"
+cd pebble && pebble install --adb --logs
+```
+
+`pebble` broadcasts a developer-connection intent to the app, forwards
+the port it answers with, and installs over it. Needs the Pebble app at
+1.10.0 or newer, USB debugging enabled on the phone, and the watch
+connected over Bluetooth.
+
+**Over the LAN** — needs two separate toggles, and missing either gives
+connection refused:
+
+1. Settings → Phone → Connectivity → enable **Use LAN developer
+   connection** (off by default).
+2. Devices → the watch's overflow menu → enable **Dev Connection**. It
+   then displays an `IPv4:` address. That is the **phone's** address,
+   not the watch's — the watch has no IP, and every install goes
+   workstation → phone → watch over Bluetooth.
+
+```sh
+cd pebble && pebble install --phone <PHONE_IPv4> --logs
+```
+
+Port 9000 is the default on both ends. Pass the IP explicitly: bare
+`pebble install --phone` is an alias for the CloudPebble relay, not a
+LAN install, and fails with "You must be logged in".
+
+**Over the CloudPebble relay** — works off your LAN, at the cost of
+signing in on both ends. Enable Dev Connection in the app while signed
+in to a Pebble account, leave the LAN toggle off, then:
+
+```sh
+pebble login
+cd pebble && pebble install --cloudpebble --logs
+```
+
+The watch vibrates when the install lands, and Kia appears in the app
+launcher.
 
 #### In the emulator
 
-Already covered above. `pebble install --emulator basalt` (or `chalk` /
-`diorite` / `emery`) reinstalls any time you rebuild.
+Already covered above. `pebble install --emulator emery` (or `basalt` /
+`diorite` / `chalk`) reinstalls any time you rebuild.
 
 ### 3. Configure from the phone
 
-1. Open the Rebble Pebble mobile app → locker → **Kia** → **Settings**.
-2. The Clay config page opens in a webview. Fill in:
-   - **Base URL**: `https://kia-proxy.example.com` (or the LAN URL you
-     chose if you're skipping TLS — e.g. `http://192.168.1.20:8000`).
-   - **Bearer token**: paste the value from `proxy/.env`.
-3. Tap **Save**. The values persist in `localStorage` on the phone; the
-   watch doesn't need to know them.
-4. Back on the watch, launch the Kia app. It should load the vehicle
-   list within a second or two. If you see `Can't reach proxy`, check
-   that the phone can reach the URL (open the URL's `/health` in the
-   phone's browser — should return `{"status":"ok","data_source":…}`;
-   401s there mean the token doesn't match).
+There is no CLI route to the settings page on real hardware —
+`pebble emu-app-config` is emulator-only. It has to come from the phone.
+
+1. Keep the watch connected and nearby.
+2. Phone app → Apps → **Kia** → **Settings**. The gear appears because
+   `package.json` declares `capabilities: ["configurable"]`, and is
+   enabled only while a compatible watch is connected.
+3. Clay opens in a WebView. Fill in:
+   - **Base URL**: the public HTTPS URL Caddy serves, e.g.
+     `https://kia-proxy.example.com`.
+   - **Bearer token**: `PROXY_BEARER_TOKEN` from the `proxy/.env` **on
+     the Pi**, not a local dev one if those have drifted. Watch for a
+     trailing newline when pasting.
+4. Tap **Save**.
+
+**Do not leave the default URL.** It is `http://localhost:8000`, which
+only ever made sense in the emulator, where the companion JS runs on your
+workstation. On a phone, `localhost` is the phone — every request would
+die against the handset's own loopback. A LAN address like
+`http://192.168.1.20:8000` works while you are at home but breaks the
+moment you leave, so prefer the Let's Encrypt hostname. A self-signed
+certificate will fail opaquely inside the WebView.
+
+Then verify:
+
+1. Launch Kia on the watch. It should show vehicle data rather than `ERR`
+   in the top-right.
+2. Tail logs over whichever transport you installed with —
+   `pebble logs --adb`, `--phone <ip>`, or `--cloudpebble`. Both the
+   watch's `APP_LOG` output and the companion's `[kia] req …` lines come
+   through the same stream.
+3. Confirm the phone can reach the proxy at all by opening
+   `https://<your-host>/health` in the phone's browser. It should return
+   `{"status":"ok","data_source":"live"}`. A 401 there means the token
+   doesn't match; a timeout means DNS, firewall or Caddy.
 
 ## Controls
 

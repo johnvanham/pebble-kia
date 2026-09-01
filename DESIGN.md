@@ -219,7 +219,7 @@ Deliberate scope limits:
 
 - Thin translator. Receives AppMessage keys from the watch, calls proxy,
   formats the response into AppMessage dictionary values, sends back.
-- Configuration page (Rebble appstore standard) to set proxy URL + bearer
+- Configuration page (Clay, the appstore standard) to set proxy URL + bearer
   token; stored in `localStorage`.
 - No Kia credentials — users never enter their Kia password on the phone.
 
