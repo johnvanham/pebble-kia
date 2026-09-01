@@ -481,9 +481,15 @@ Clients re-fetch on the next request; no watch-side restart needed.
   accept the outstanding consent/terms screen, then retry. The proxy
   can't clear this for you.
 - **Watch shows `Kia login failed`** — `KIA_USERNAME` / `KIA_PASSWORD`
-  don't work. Confirm them in the official app first. If they work
-  there but not here, Kia has probably changed its login flow — try
-  `uv sync --upgrade-package hyundai-kia-connect-api`.
+  don't work. Confirm them in the official app first. **If they work in
+  the app and locally but fail under Docker, wrap the password in single
+  quotes in `.env`.** `docker compose` reads that file for its own
+  interpolation and treats `$NAME` as a variable reference, so an
+  unquoted `$` truncates the password before the container ever sees it;
+  compose warns about an unset variable, which reads like noise. Single
+  quotes are literal to both compose and pydantic-settings. If the
+  credentials work everywhere and still fail, Kia has probably changed
+  its login flow — try `uv sync --upgrade-package hyundai-kia-connect-api`.
 - **Watch shows `Kia rate limited`** — too many calls against the
   account. Back off; the intervals in `.env` exist to prevent this.
 - **A long-press refresh seems to do nothing** — check `forced` in the
