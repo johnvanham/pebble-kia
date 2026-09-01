@@ -64,12 +64,6 @@ anything off this list:
 
 ## Reliability / UX
 
-- **Persist last-known state to watch storage.** Currently the watch
-  shows "Connecting…" on every launch until the companion replies.
-  Writing the current `Vehicle` array into `persist_*` at notify time
-  and restoring it in `app_state_init` would give an instant first
-  paint with stale-but-useful data. Already on the phased-plan list as
-  part of later UX polish.
-- **Vibrate on errors that change state** (e.g. proxy goes from OK to
-  `Can't reach proxy` on a refresh). Avoids silent failure — user
-  notices the missed update without staring at the watch.
+Both entries that lived here — persisting last-known state to watch
+storage, and vibrating on an error that changes state — shipped in phase
+5. Nothing outstanding.
