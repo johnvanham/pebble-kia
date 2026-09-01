@@ -12,9 +12,9 @@ as a hosted service.
 
 | Component              | Status                                                     |
 | ---------------------- | ---------------------------------------------------------- |
-| Pebble watchapp (C)    | Emery-first layout, touch + button controls, launcher icon, instant boot |
+| Pebble watchapp (C)    | Emery-first layout, touch + button controls, actions menu, launcher icon, instant boot |
 | PebbleKit JS companion | Clay config page (proxy URL, token, miles/km toggle)       |
-| Self-hosted proxy      | FastAPI, `demo` + `live` sources, cache + rate limit       |
+| Self-hosted proxy      | FastAPI, `demo` + `live` sources, cache + rate limit, opt-in remote commands |
 | Scenario engine        | Time-evolving demos under `proxy/scenarios/`               |
 | Push notifications     | Proxy detector → ntfy (self-hosted) → phone/watch          |
 | Live Kia integration   | Real Kia Connect data; SQLite-persisted token and state    |
@@ -126,6 +126,21 @@ it never wakes the car. `LIVE_FORCE_MIN_SECONDS` (900) bounds force
 refreshes (long-press Select, or drag down on a Pebble Time 2), which
 wake the car and draw on its 12V battery. A force inside that window
 quietly returns cached data with `forced: false` rather than an error.
+
+**Decide whether to enable remote commands.** The watch has an actions
+menu (lock/unlock, charging, climate, charge port, valet), but the
+proxy ships with the endpoint behind it disabled. The bearer token
+otherwise grants only reads, so a leaked token means someone can watch
+the car's state — not unlock it. Enabling commands raises that blast
+radius, which is why it is a deliberate opt-in rather than a default.
+Add to `.env` if you want it:
+
+```
+ENABLE_COMMANDS=1
+```
+
+`COMMAND_MIN_SECONDS` (default 10) spaces commands apart; one sent
+inside the window is rejected with a 429 rather than queued.
 
 **Pick a push topic** — any guess-hard string (the topic name is the
 only access control on a default ntfy install). Add to `.env`:
@@ -381,25 +396,48 @@ refresh does that.
 
 The Pebble Time 2 is the only target with a touchscreen.
 
-- **Drag down** (either screen) — force refresh: wakes the car, same as
-  long-press Select, and subject to the same `LIVE_FORCE_MIN_SECONDS`
-  downgrade window.
+- **Drag down** (main or detail) — force refresh: wakes the car, same
+  as long-press Select, and subject to the same
+  `LIVE_FORCE_MIN_SECONDS` downgrade window.
 - **Swipe left** (main screen) — open the detail screen.
+- **Swipe left** (detail screen) — open the actions menu.
 - **Swipe right** (detail screen) — back to the main screen.
 - **Swipe right** (main screen) — quit the app.
+
+The actions menu itself is a native menu, so touch works on it
+directly: drag to scroll, tap a row to trigger it, swipe right to go
+back.
 
 ### Buttons (all platforms)
 
 The only controls on basalt, diorite and chalk.
 
-- **Up / Down** — switch vehicle. Only does anything when the account
-  has more than one vehicle; with a single car it no longer triggers a
-  phantom refresh and spinner.
-- **Select** — open the detail screen (odometer, outside temp, doors,
-  charge rate, ETA).
+- **Up / Down** — on the main screen, switch vehicle. Only does
+  anything when the account has more than one vehicle; with a single
+  car it no longer triggers a phantom refresh and spinner. On the
+  detail screen they scroll.
+- **Select** — on the main screen, open the detail screen; on the
+  detail screen, open the actions menu.
 - **Select (long press, ≥500ms)** — force refresh the current vehicle,
   with a short vibration.
-- **Back** — return to the main screen or exit the app.
+- **Back** — return to the previous screen or exit the app.
+
+The detail screen scrolls: door/lock state with a count of anything
+open (doors, windows, trunk, hood, sunroof), outside temp, 12V
+battery, AC and DC charge limits, charge rate and ETA while charging,
+efficiency, battery temperature and odometer.
+
+### Actions menu
+
+The menu lists lock, unlock, charging start/stop, climate start/stop,
+charge port open/close and valet mode start/stop. Risky ones —
+unlock, stopping a charge, valet — ask for confirmation before
+anything is sent. "Sent" means the proxy accepted the command and
+handed it to Kia, not that the car has finished acting on it: the car
+takes a few seconds, and the app re-reads state on its own shortly
+after, so the display catches up without any extra taps. The menu
+needs `ENABLE_COMMANDS=1` on the proxy (see [Setup](#setup)); without
+it the watch shows `Commands disabled`.
 
 While a request is in flight the watch shows a small spinner top-right.
 Errors surface in the bottom status line so the user can read what went
@@ -536,6 +574,15 @@ Clients re-fetch on the next request; no watch-side restart needed.
   check `forced` in the response. `false` means you were inside
   `LIVE_FORCE_MIN_SECONDS` and got cached data on purpose, which is the
   intended behaviour rather than a fault.
+- **Watch shows `Commands disabled`** — the actions endpoint is off,
+  which is the shipped default. Set `ENABLE_COMMANDS=1` in `proxy/.env`
+  and restart the proxy.
+- **An action seems to do nothing** — two benign causes. Repeating a
+  command inside `COMMAND_MIN_SECONDS` gets a 429 from the proxy, which
+  the watch surfaces in the status line. And a command that *was*
+  accepted takes the car a few seconds to act on; the app re-reads
+  state automatically shortly after, so give the display a moment to
+  catch up before retrying.
 - **Data looks stale right after launch** — launch already skips the
   proxy's cache window (`fresh=1`), so what you see is the newest state
   Kia's servers hold. A parked car reports infrequently; drag down or
@@ -574,8 +621,12 @@ The phased plan lives in `DESIGN.md`. Short version:
    OK→error edge ← **done**
 6. Touch controls on emery, always-fresh launch reads, launcher icon
    and store-listing prep ← **done**
+7. Opt-in remote commands (`ENABLE_COMMANDS`) with a watch actions
+   menu and confirm steps, plus a scrollable detail screen with charge
+   limits, a summary of anything open, efficiency and battery
+   temperature ← **done**
 
-All six planned phases are complete.
+All seven planned phases are complete.
 
 ## For forkers
 

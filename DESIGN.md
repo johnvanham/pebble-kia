@@ -1,7 +1,8 @@
 # Pebble Kia Watch App — Design
 
-Status: all six phases built. Live Kia data flows watch -> companion ->
-proxy -> Kia Connect.
+Status: all seven phases built. Live Kia data flows watch -> companion ->
+proxy -> Kia Connect, and watch-initiated remote commands flow the same
+path back to the car when the proxy opts in (`ENABLE_COMMANDS`).
 
 Goal: view live stats for a Kia PV5 Passenger (and future vehicles on the same
 account) from a Pebble smartwatch — state of charge, estimated range, charging
@@ -116,6 +117,8 @@ informed choice to strip the proxy out.
     (rate-limited, default ≥ 15 minutes between wakes). When both are
     sent, force wins.
   - `POST /vehicles/{id}/refresh` — explicit refresh, same rate limit.
+  - `POST /vehicles/{id}/actions/{action}` — remote command, gated
+    behind `ENABLE_COMMANDS` — see "Remote commands" below.
 - Auth: single shared bearer token in an env var; the companion sends it on
   every call. No per-user login — this is a single-user system.
 - Persistence: SQLite file for the refresh token and last-known vehicle state.
@@ -170,6 +173,32 @@ matters for the 12V battery:
   and `forced: false` in the response, so a impatient long-press costs
   nothing and never surfaces an error. `forced` is the only way to tell
   a real wake from a downgrade from outside.
+
+#### Remote commands
+
+Commands were out of scope until the owner explicitly asked for them —
+exactly the trigger the original scope note anticipated. They are
+deliberately narrow and off by default.
+
+- `POST /vehicles/{id}/actions/{action}`, ten actions: `lock`,
+  `unlock`, `start_charge`, `stop_charge`, `start_climate`,
+  `stop_climate`, `open_charge_port`, `close_charge_port`,
+  `start_valet`, `stop_valet`. Hazard lights are deliberately absent:
+  `hyundai_kia_connect_api` raises not-implemented for them in the EU
+  region.
+- Off unless `ENABLE_COMMANDS=1`. The bearer token has only ever
+  granted reads, so its blast radius was "someone can watch the car's
+  state". A leaked token must not silently gain unlock; turning
+  mutation on is a deliberate operator decision on the proxy side,
+  never a default.
+- `COMMAND_MIN_SECONDS` floors the interval between commands. Unlike
+  a downgraded force, a command inside the window is refused with a
+  429 — silently dropping a lock request would be worse than an error.
+- Watch-initiated only. No proxy code path — not the detector, not any
+  timer — ever sends a command on its own; every command traces back
+  to a press or tap on the wrist.
+- Risky actions (unlock, stop charge, valet) confirm on the watch
+  before the request is sent.
 
 ### Kia authentication
 
@@ -234,24 +263,36 @@ Deliberate scope limits:
 
 - Written in C against the Pebble SDK (Core Devices 4.33.1).
 - Screens:
-  - **Main** — big SoC percentage with a charging/idle bolt beside it
+  - **Main** — big centred SoC percentage with a charging/idle bolt
     (filled while charging, outline while idle, so the state survives
     the 1-bit platforms), battery bar, range, plug and lock status,
     last-updated timestamp.
-  - **Detail** — door/lock state, outside temp, 12V SoC, charge rate (kW) if
-    charging, estimated charge-complete time.
+  - **Detail** — scrollable: door/lock state plus a summary of open
+    doors, windows, trunk, hood and sunroof, outside temp, 12V SoC,
+    AC/DC charge limits, charge rate (kW) and estimated
+    charge-complete time while charging, efficiency, battery
+    temperature, odometer. Shows the same in-flight spinner as main.
+  - **Actions** — a menu of the ten remote commands (see "Remote
+    commands"), opened from the detail screen. Risky entries confirm
+    before sending.
 - Controls, buttons (all platforms, and the only controls on basalt,
-  diorite and chalk): Select = open detail, long-press Select (≥500ms)
-  = force refresh with a short vibe, Up/Down = switch vehicle (a no-op
-  unless the account has more than one), Back = return/exit.
+  diorite and chalk): Select = open detail on main, open the actions
+  menu on detail; long-press Select (≥500ms) = force refresh with a
+  short vibe; Up/Down = switch vehicle on main (a no-op unless the
+  account has more than one) and scroll on detail — vehicle switching
+  lives on main only; Back = return/exit.
 - Controls, touch (emery only — the Pebble Time 2 is the only target
   with a touchscreen; recognizers are attached per window): drag down
-  on either screen = force refresh, swipe left on main = open detail,
-  swipe right on detail = back to main, swipe right on main = quit.
-  Touch delivery is opt-in: `app_touch_navigation_enable(true)` at app
-  init is required before a third-party app receives any touch input,
-  and each window disables the system touch bridge so gestures reach
-  the app's own recognizers instead of the built-in button emulation.
+  on main or detail = force refresh, swipe left on main = open detail,
+  swipe left on detail = open the actions menu, swipe right on detail
+  = back to main, swipe right on main = quit. Touch delivery is
+  opt-in: `app_touch_navigation_enable(true)` at app init is required
+  before a third-party app receives any touch input. The two canvas
+  screens (main, detail) disable the system touch bridge so gestures
+  reach the app's own recognizers instead of the built-in button
+  emulation; the actions menu keeps the bridge, so the system's
+  native touch scroll/tap/swipe-back drives it with no recognizers of
+  its own.
 - Persistent storage: last known state per vehicle, so the watch shows data
   instantly before the first fetch completes.
 
@@ -266,14 +307,15 @@ Watch → companion (requests):
 
 | Key         | Type   | Notes                                               |
 |-------------|--------|-----------------------------------------------------|
-| `REQ_KIND`  | string | `list` \| `status` \| `refresh`                     |
-| `REQ_ID`    | string | Vehicle id (status/refresh only)                    |
+| `REQ_KIND`  | string | `list` \| `status` \| `refresh` \| `action`         |
+| `REQ_ID`    | string | Vehicle id (status/refresh/action)                  |
+| `ACTION`    | string | Action name (action requests; see "Remote commands") |
 
 Companion → watch (responses):
 
 | Key             | Type    | Notes                                                |
 |-----------------|---------|------------------------------------------------------|
-| `RESP_KIND`     | string  | `ready` (startup nudge) \| `list` \| `status` \| `error` |
+| `RESP_KIND`     | string  | `ready` (startup nudge) \| `list` \| `status` \| `action_ok` \| `error` |
 | `VEHICLE_COUNT` | uint8   | list response                                        |
 | `VEHICLE_ID[N]` | string  | list response (N slots, `MAX_VEHICLES` = 4)          |
 | `VEHICLE_NICK[N]`| string | list response (display name)                        |
@@ -283,14 +325,24 @@ Companion → watch (responses):
 | `IS_CHARGING`   | bool    |                                                      |
 | `CHARGE_KW_X10` | uint16  | Charge rate × 10 to carry 1 decimal without floats   |
 | `CHARGE_ETA_MIN`| uint16  | Minutes to target SoC                                |
+| `CHARGE_LIM_AC` | uint8   | AC charge limit, percent                             |
+| `CHARGE_LIM_DC` | uint8   | DC charge limit, percent                             |
 | `PLUG`          | uint8   | 0=unplugged, 1=AC, 2=DC                              |
 | `DOORS_LOCKED`  | bool    |                                                      |
+| `DOORS_OPEN`    | uint8   | Count of open doors, 0–4                             |
+| `WINDOWS_OPEN`  | uint8   | Count of open windows, 0–4                           |
+| `TRUNK_OPEN`    | bool    |                                                      |
+| `HOOD_OPEN`     | bool    |                                                      |
+| `SUNROOF_OPEN`  | bool    |                                                      |
 | `OUTSIDE_TEMP_C`| int8    | Ambient; the PV5 reports no cabin reading            |
+| `BATT_TEMP_C`   | int8    | Traction-battery temperature                         |
+| `EFF_KMPKWH_X10`| uint16  | Efficiency (km/kWh) × 10 — metric on the wire, like every distance |
 | `ODO_KM`        | uint32  |                                                      |
 | `AUX_BATTERY_PCT`| uint8  | 12V auxiliary battery, 0–100; 0 means not reported   |
 | `IS_CLIMATE_ON` | bool    | Maps to `air_control_is_on` upstream                 |
 | `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
 | `UNIT_MILES`    | bool    | Clay units toggle; rides every list/status response  |
+| `ACTION`        | string  | `action_ok` response — echoes the command that ran   |
 | `ERROR_MSG`     | string  | Populated on failure; watch surfaces it in the UI    |
 
 Startup race: the companion emits `RESP_KIND=ready` when it comes
@@ -369,10 +421,11 @@ server); the list below reflects the path actually taken.
    vibration on the OK→error edge, never repeated while the error
    persists. **Done.**
 
-   Not built: a separate vehicle-picker screen. Up/Down already cycles
-   vehicles on both screens, which is the same affordance a picker would
-   provide; a list window for an account with one car would be dead
-   code. Revisit if a second vehicle ever lands on the account.
+   Not built: a separate vehicle-picker screen. Up/Down on the main
+   screen already cycles vehicles (phase 7 moved detail's Up/Down to
+   scrolling), which is the same affordance a picker would provide; a
+   list window for an account with one car would be dead code. Revisit
+   if a second vehicle ever lands on the account.
 
 6. **Touch controls, launch freshness, and packaging polish.** Touch
    gestures on the Pebble Time 2, the only target with a touchscreen:
@@ -388,7 +441,19 @@ server); the list below reflects the path actually taken.
    `pebble/appstore.md` drafts a future store listing, since sideloaded
    apps cannot ship a description to the phone. **Done.**
 
-All six planned phases are complete.
+7. **Remote commands and detail depth.** An actions menu — Select or
+   swipe left on the detail screen — sends the ten remote commands
+   through the companion to the proxy's actions endpoint, gated behind
+   `ENABLE_COMMANDS` and throttled by `COMMAND_MIN_SECONDS`, with a
+   confirm step on the risky ones (see "Remote commands"). The detail
+   screen became scrollable — Up/Down scroll it, so vehicle switching
+   now lives on the main screen only — and gained AC/DC charge limits,
+   a summary of open doors, windows, trunk, hood and sunroof,
+   efficiency and battery temperature; it also shows the in-flight
+   spinner main already had. The main screen's SoC is centred.
+   **Done.**
+
+All seven planned phases are complete.
 
 ## Risks and open questions
 
@@ -452,8 +517,6 @@ can drift out of date.
 
 ## Out of scope (for now)
 
-- Remote commands (lock/unlock, climate pre-conditioning, start charging).
-  Read-only first; commands are a separate risk surface.
 - Multi-account / multi-user support.
 - Apple Watch / Wear OS parity.
 - Android Automotive in-vehicle app (different SDK, different problem).

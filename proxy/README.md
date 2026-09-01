@@ -18,6 +18,7 @@ All phases built. Two data sources sit behind one cache: `demo` reads
 scenario), and `live` wraps `hyundai_kia_connect_api` against the real
 Kia account, with the refresh token and last-known state persisted to
 SQLite so restarts cost neither a login nor a cold watch screen.
+Remote commands exist too, behind `ENABLE_COMMANDS` — see "Endpoints".
 
 ## Endpoints
 
@@ -29,6 +30,7 @@ All routes except `/health` require `Authorization: Bearer <token>`.
 | GET    | `/vehicles`                         | Account vehicles: id, VIN, nickname, model  |
 | GET    | `/vehicles/{id}/status[?force=1][?fresh=1]` | Cached status; see the flags below  |
 | POST   | `/vehicles/{id}/refresh`            | Same as `force=1` — wakes the vehicle       |
+| POST   | `/vehicles/{id}/actions/{action}`   | Remote command; off unless `ENABLE_COMMANDS=1` |
 
 Two flags, two very different costs. `force=1` (and `/refresh`) wakes
 the telematics unit for genuinely current data; it draws on the 12V
@@ -39,6 +41,19 @@ an ordinary read that skips the `LIVE_REFRESH_MIN_SECONDS` cache window
 — it asks Kia's servers for the state they already hold and never wakes
 the car; the watch sends it once per launch. When both are sent, force
 semantics win.
+
+Commands are a separate risk surface from reads, so the actions route
+is off unless `ENABLE_COMMANDS=1` — the bearer token otherwise grants
+nothing but reads, and a leaked token must not silently gain unlock.
+Ten actions are accepted: `lock`, `unlock`, `start_charge`,
+`stop_charge`, `start_climate`, `stop_climate`, `open_charge_port`,
+`close_charge_port`, `start_valet`, `stop_valet` (hazard lights are
+absent because `hyundai_kia_connect_api` raises not-implemented for
+the EU region). `COMMAND_MIN_SECONDS` floors the interval between
+commands; unlike a downgraded force, a command inside the window is
+refused with a 429, because silently dropping a lock request would be
+worse than an error. Commands are only ever watch-initiated — nothing
+in the proxy sends one on a timer.
 
 ## Run locally
 
@@ -152,6 +167,8 @@ All settings are environment variables (see `.env.example`):
 - `DEMO_DATA_FILE` — path to the JSON file the demo source reads. Relative paths resolve against the working directory.
 - `LIVE_REFRESH_MIN_SECONDS` — min seconds between live pulls on the live source. Defaults to 600. Protects the 12V battery from aggressive polling.
 - `DEMO_REFRESH_MIN_SECONDS` — same knob, demo source. Defaults to 5 so scenario progression is visible to polling clients.
+- `ENABLE_COMMANDS` — set to `1` to enable `POST /vehicles/{id}/actions/{action}`. Off by default; see "Endpoints" for why.
+- `COMMAND_MIN_SECONDS` — minimum seconds between remote commands (default 10); a command inside the window gets a 429.
 - `DETECTOR_INTERVAL_SECONDS` — how often the transition detector polls its source to diff for notifications. Unset means per-source defaults: 20 on demo, 300 on live.
 - `NTFY_URL` / `NTFY_TOPIC` / `NTFY_AUTH_TOKEN` — push-notification destination. Leave `NTFY_URL` empty to disable. See "Notifications" below.
 - `SETUP_QR_DIR` — directory the setup QR images are written to at startup. Defaults to `setup/` inside the `proxy/` directory, resolved from the package rather than the working directory so it does not move with however the app was launched. Empty disables them.

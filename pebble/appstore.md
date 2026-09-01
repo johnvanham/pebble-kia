@@ -21,8 +21,10 @@ status, straight from the wrist.
 
 Shows the state Kia Connect already knows about your car: battery
 percentage, range, charging status with rate and time-to-full, door
-locks, climate, outside temperature and odometer. Read-only by design;
-the app never sends commands to the vehicle. It talks to a small
+locks, climate, outside temperature and odometer. Read-only by
+default; remote actions (lock/unlock, charging, climate, valet) are
+available only when the self-hosted proxy explicitly enables them.
+It talks to a small
 self-hosted proxy (FastAPI, source in the same repo) rather than to
 Kia directly, so you need a Kia Connect account and somewhere to run
 the proxy — a Raspberry Pi is plenty. Buttons work everywhere, and on

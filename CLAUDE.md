@@ -16,13 +16,14 @@ deliberate — don't re-litigate it without being asked.
 
 ## Current phase
 
-All six phases done: the `live` source talks to the owner's real Kia
+All seven phases done: the `live` source talks to the owner's real Kia
 account via `hyundai_kia_connect_api`, with SQLite persistence for the
 refresh token and last-known state. `DATA_SOURCE=live` in `proxy/.env`
 switches it on; `demo` remains for offline iteration and still drives
 the scenario replayer. Phase 6 added touch controls on emery, an
 always-fresh launch read (`fresh=1`) and the launcher menu icon
-(`pebble/resources/`).
+(`pebble/resources/`). Phase 7 added opt-in remote commands
+(`ENABLE_COMMANDS`, watch actions menu) and a scrollable detail screen.
 
 The owner's watch is now a **Pebble Time 2 (`emery`)**, which has a
 larger display than the Pebble Time the UI was originally laid out for,
@@ -62,9 +63,13 @@ read it back into a transcript or echo it in command output.
 
 Guardrails:
 
-- Never add endpoints that mutate the vehicle (lock, start charging,
-  climate). Read-only; commands are a separate risk surface — see
-  DESIGN.md "Out of scope".
+- Mutating endpoints exist now, at the owner's explicit request, behind
+  `ENABLE_COMMANDS` (default off): `POST /vehicles/{id}/actions/{action}`.
+  Never trigger a command from a timer, the detector, or anything but
+  an explicit watch request. The action list must stay in sync across
+  proxy, companion and watch, and risky actions (unlock, stop charge,
+  valet) keep their confirm step on the watch. Threat model: DESIGN.md
+  "Remote commands".
 - The `demo` and `live` sources must expose exactly the same shape.
   When adding a field, extend `app/models.py`, update the demo JSON,
   and leave a clear TODO on the live side if it's not yet
@@ -165,6 +170,11 @@ command itself works; only the usage-printing path is broken. Pass a
 valid `action` plus at least one button and it's fine. Valid actions are
 `click`, `push` (hold), `release`.
 
+What the buttons mean depends on the screen (phase 7 changed this):
+Select on main opens detail, Select on detail opens the actions menu,
+Up/Down switch vehicle on main but scroll on detail — vehicle switching
+is main-screen only.
+
 Emery's touch gestures (drag down, swipes) CAN be exercised headlessly,
 but not via `pebble emu-button` — the path is the emulator's VNC server:
 
@@ -222,10 +232,13 @@ it actually looks like. Known gotchas:
 - Touch is a three-part contract, and all three parts are load-bearing:
   `app_touch_navigation_enable(true)` once at init (third-party apps
   receive NO touch input at all without it — recognizers just sit
-  silent), `window_set_touch_bridge_disabled(window, true)` per window
-  (else the system set consumes gestures first), and recognizers
+  silent), `window_set_touch_bridge_disabled(window, true)` per canvas
+  window (else the system set consumes gestures first), and recognizers
   attached in `window_load` (the window owns and destroys them on
-  unload, so re-attaching each load is correct). The recognizer API is
+  unload, so re-attaching each load is correct). The actions menu is
+  the deliberate exception: it keeps the system touch bridge so native
+  touch scroll/tap/swipe-back drive the MenuLayer, and attaches no
+  recognizers of its own. The recognizer API is
   real only on emery; the other platforms stub it as `(0)` no-op macros
   that don't compile against struct-returning calls, hence the
   `#if PBL_API_EXISTS(window_attach_recognizer)` guards.
@@ -281,8 +294,10 @@ readout, route it through `format_distance_km()` rather than hard-coding
 ## Things to not do without checking
 
 - Add a second user / multi-tenant anything — explicitly out of scope.
-- Add remote commands (lock/unlock, start charging, climate). Read-only
-  first; commands are a separate risk surface.
+- Grow the remote-command surface — new actions, new triggers, or any
+  path around `ENABLE_COMMANDS`. The ten watch-initiated actions are
+  the agreed scope; see the proxy guardrails and DESIGN.md "Remote
+  commands".
 - Replace the proxy with direct phone-to-Kia mode. The decision is in
   `DESIGN.md`; the proxy is reused by Home Assistant and a planned
   dashboard, so it earns its keep beyond the watchapp.
