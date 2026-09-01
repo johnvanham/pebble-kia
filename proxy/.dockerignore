@@ -1,0 +1,14 @@
+# The build context is shipped to the daemon in full, so keep secrets and
+# local state out of it. The image needs only pyproject.toml, uv.lock,
+# app/, demo-data.json and scenarios/ (see Dockerfile).
+.env
+setup/
+state.db
+state.db-wal
+state.db-shm
+tools/dump-*.json
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+tests/

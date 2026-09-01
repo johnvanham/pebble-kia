@@ -19,7 +19,7 @@ from .models import VehicleStatus
 from .notifier import Notifier
 from .sources.base import VehicleNotFound
 
-log = logging.getLogger("detector")
+log = logging.getLogger(__name__)
 
 _PLUG_LABELS = {"unplugged": "unplugged", "ac": "AC", "dc": "DC"}
 

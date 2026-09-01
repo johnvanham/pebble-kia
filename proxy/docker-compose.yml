@@ -18,6 +18,7 @@ services:
       # over env_file, so .env can keep host-side paths.
       - DEMO_DATA_FILE=/app/demo-data.json
       - PROXY_STATE_DB=/app/state/state.db
+      - SETUP_QR_DIR=/app/setup
       # Proxy reaches ntfy over the compose network. External clients
       # (phone subscribers) go through Caddy at NTFY_PUBLIC_URL.
       - NTFY_URL=${NTFY_URL:-http://ntfy:80}
@@ -28,6 +29,11 @@ services:
       # Kia refresh token + last-known vehicle state. Survives
       # restarts so the watch isn't waiting on a cold fetch.
       - proxy-state:/app/state
+      # Setup QR images, on a bind mount so they can be opened and
+      # scanned from the host. They encode the bearer token and are
+      # written owner-only by the container's user (root), so reading
+      # them from the host needs sudo. Nothing serves them over HTTP.
+      - ./setup:/app/setup
     ports:
       # Loopback by default: the intended deployment puts Caddy in front
       # and lets it own TLS. Set PROXY_BIND=0.0.0.0 to reach it directly

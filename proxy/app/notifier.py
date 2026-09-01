@@ -13,7 +13,7 @@ from typing import Protocol
 
 import httpx
 
-log = logging.getLogger("notifier")
+log = logging.getLogger(__name__)
 
 
 class Notifier(Protocol):

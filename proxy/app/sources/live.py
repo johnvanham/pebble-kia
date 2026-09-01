@@ -25,7 +25,7 @@ from ..models import PlugState, Vehicle, VehicleStatus
 from ..store import StateStore
 from .base import VehicleNotFound
 
-log = logging.getLogger("live")
+log = logging.getLogger(__name__)
 
 MILES_TO_KM = 1.609344
 

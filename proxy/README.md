@@ -148,7 +148,46 @@ All settings are environment variables (see `.env.example`):
 - `DEMO_REFRESH_MIN_SECONDS` — same knob, demo source. Defaults to 5 so scenario progression is visible to polling clients.
 - `DETECTOR_INTERVAL_SECONDS` — how often the transition detector polls its source to diff for notifications. Defaults to 20.
 - `NTFY_URL` / `NTFY_TOPIC` / `NTFY_AUTH_TOKEN` — push-notification destination. Leave `NTFY_URL` empty to disable. See "Notifications" below.
-- `LOG_LEVEL` — uvicorn log level. Defaults to `info`.
+- `SETUP_QR_DIR` — directory the setup QR images are written to at startup. Defaults to `setup/` inside the `proxy/` directory, resolved from the package rather than the working directory so it does not move with however the app was launched. Empty disables them.
+- `SETUP_QR_LOG` — also print the token QR into the startup log. Off by default; see "Setup QR" for why.
+- `PROXY_PUBLIC_URL` — the base URL the phone should use. Only used to draw the URL QR; leave empty and that image is skipped.
+- `LOG_LEVEL` — level for the proxy's own loggers (`app.*`) and nothing else. Defaults to `info`. It does not reach uvicorn's request log, and it deliberately does not raise the root level: `hyundai_kia_connect_api` at DEBUG prints whole Kia payloads including VIN and GPS, so third-party loggers stay at WARNING. An unrecognised value logs a warning and falls back to `info`.
+
+## Setup QR
+
+Clay's settings page cannot open the camera — pebble-clay serves it from
+a `data:` URI, an opaque origin, so it is not a secure context and
+`getUserMedia` is unavailable. Instead the proxy writes QR codes on
+startup and you scan them with the phone's ordinary camera app, then
+paste into Clay:
+
+- `$SETUP_QR_DIR/bearer-token.png` — the bearer token, nothing else.
+- `$SETUP_QR_DIR/proxy-url.png` — `PROXY_PUBLIC_URL`, when it is set.
+
+These images are a live credential in visual form. The directory and
+files are created `0700`/`0600`, the directory is gitignored (in
+`proxy/.gitignore` and again at the repo root), and nothing serves them
+over HTTP — do not add a route or a `StaticFiles` mount for them. Under
+compose they land on the `./setup` bind mount, written by the
+container's root user, so reading them from the host needs `sudo`.
+
+The old image is removed before the new one is written, so a failed
+write leaves no file rather than a `bearer-token.png` still encoding a
+superseded token. A missing QR is obvious; a stale one that scans
+cleanly is not.
+
+### Putting the QR in the log
+
+Setting `SETUP_QR_LOG=1` additionally renders the token QR into the
+startup log, which on a headless Docker host is the only way to see it
+without shelling into the container. Understand what that costs: the log
+block *is* the bearer token, machine-decodable by any camera. Logs are
+kept by the container log driver long after the token is rotated, get
+shipped wherever the host sends logs, and end up pasted into issues and
+chats. That is a weaker place to hold the credential than the `0600`
+file, which is why it is off by default. Turn it on for a first setup,
+turn it back off, and rotate `PROXY_BEARER_TOKEN` if a log with the block
+in it has gone anywhere you do not control.
 
 ## Notifications
 

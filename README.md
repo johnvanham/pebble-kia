@@ -341,6 +341,56 @@ launcher.
 Already covered above. `pebble install --emulator emery` (or `basalt` /
 `diorite` / `chalk`) reinstalls any time you rebuild.
 
+#### Getting the token onto the phone
+
+The bearer token is 64 hex characters and typing it on a phone keyboard is
+awful. On startup the proxy writes QR codes for it, so you can scan rather
+than type.
+
+Set the URL the phone should use in `proxy/.env` — the proxy has no way to
+know its own externally-reachable address, so if this is unset it writes
+the token code only:
+
+```
+PROXY_PUBLIC_URL=https://kia-proxy.example.com
+```
+
+Restart the proxy. Two images appear in `proxy/setup/`:
+
+```
+proxy/setup/bearer-token.png    the value for the Bearer token field
+proxy/setup/proxy-url.png       the value for the Base URL field
+```
+
+Open them on the machine running the proxy (`xdg-open proxy/setup/bearer-token.png`),
+scan with the phone's ordinary camera app, and paste the recognised text
+into the matching field in the watchapp's settings. The camera app copies
+the decoded string to the clipboard; there is no scanning built into the
+settings page itself, because Pebble serves the Clay config page as a
+`data:` URI, which is not a secure context and so cannot open a camera.
+
+Running in Docker on a headless box? The token QR can also go to the
+startup log, which is then the only channel you need. It is off by
+default, because a QR block in a log *is* the token in machine-readable
+form, and logs outlive token rotation, get shipped off the host by
+collectors, and end up pasted into issues. Turn it on deliberately:
+
+```
+SETUP_QR_LOG=1
+```
+
+```sh
+sudo docker compose logs proxy | head -40
+```
+
+Rotate the token if a log carrying it has gone anywhere you don't control.
+
+`proxy/setup/` is gitignored and written owner-only, because those images
+are a live credential in scannable form — treat them exactly like the
+`.env` they came from. Anyone who photographs your screen has your token.
+They are never served over HTTP.
+
+
 ### 3. Configure from the phone
 
 There is no CLI route to the settings page on real hardware —

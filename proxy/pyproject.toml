@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.5",
     "httpx>=0.27",
     "hyundai-kia-connect-api>=4.27",
+    "segno>=1.6",
 ]
 
 [dependency-groups]

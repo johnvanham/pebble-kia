@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .models import VehicleStatus
 
-log = logging.getLogger("store")
+log = logging.getLogger(__name__)
 
 TOKEN_KEY = "kia_token"
 

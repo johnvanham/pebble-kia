@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -17,14 +18,17 @@ from hyundai_kia_connect_api.exceptions import (
 
 from .auth import verify_bearer
 from .cache import StatusCache
-from .config import Settings, detector_interval, load_settings
+from .config import Settings, configure_logging, detector_interval, load_settings
 from .detector import TransitionDetector
 from .models import StatusResponse, VehicleList, VehicleStatus
 from .notifier import Notifier, NtfyNotifier, NullNotifier
 from .sources.base import DataSource, VehicleNotFound
 from .sources.demo import DemoDataSource
 from .sources.live import LiveDataSource
+from .setup_qr import emit_setup_qr
 from .store import StateStore
+
+log = logging.getLogger(__name__)
 
 
 def _build_source(settings: Settings, store: StateStore) -> DataSource:
@@ -49,6 +53,10 @@ def _build_notifier(settings: Settings) -> Notifier:
 async def lifespan(app: FastAPI):
     settings = load_settings()
     app.state.settings = settings
+    # uvicorn only configures its own loggers, so without this the app's
+    # own info-level output (detector transitions, setup QR) is dropped.
+    configure_logging(settings)
+    emit_setup_qr(settings)
     app.state.store = store = StateStore(settings.state_db)
     app.state.source = source = _build_source(settings, store)
 
@@ -78,8 +86,7 @@ async def lifespan(app: FastAPI):
         )
         detector.start()
     except Exception:
-        import logging
-        logging.getLogger("lifespan").warning(
+        log.warning(
             "transition detector not started (source.list_vehicles failed)",
             exc_info=True,
         )

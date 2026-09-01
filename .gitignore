@@ -1,0 +1,8 @@
+# Belt and braces for proxy/.gitignore. Both hold live credentials — the
+# QR images encode the bearer token, the SQLite state holds the Kia
+# refresh token — and a proxy launched from the repo root drops them
+# here, untracked and one `git add -A` away from being published.
+setup/
+state.db
+state.db-wal
+state.db-shm
