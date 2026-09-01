@@ -16,6 +16,12 @@
 // written. Units follow app_state_unit_miles() at call time.
 int format_distance_km(uint32_t km, char *buf, size_t sz);
 
+// Formats a driving efficiency carried as km/kWh x10 into the
+// configured display units, e.g. "4.5 km/kWh" or "2.8 mi/kWh", or "--"
+// when the reading is absent (0). Same integer-math conversion as
+// format_distance_km.
+int format_efficiency(uint16_t kmpkwh_x10, char *buf, size_t sz);
+
 // Formats how long ago a reading was taken, e.g. "42s ago" or "3d
 // ago", or "--" for a timestamp we never got. Both screens show this,
 // so it lives here rather than in either one.

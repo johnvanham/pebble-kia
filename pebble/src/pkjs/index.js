@@ -127,6 +127,16 @@ function statusMessage(vehicleId, data) {
     ODO_KM: s.odo_km | 0,
     IS_CLIMATE_ON: s.is_climate_on ? 1 : 0,
     AUX_BATTERY_PCT: s.aux_battery_pct | 0,
+    CHARGE_LIM_AC: s.charge_limit_ac | 0,
+    CHARGE_LIM_DC: s.charge_limit_dc | 0,
+    DOORS_OPEN: s.doors_open | 0,
+    WINDOWS_OPEN: s.windows_open | 0,
+    TRUNK_OPEN: s.trunk_open ? 1 : 0,
+    HOOD_OPEN: s.hood_open ? 1 : 0,
+    SUNROOF_OPEN: s.sunroof_open ? 1 : 0,
+    EFF_KMPKWH_X10: Math.round(((s.efficiency_kmpkwh || 0) * 10)) | 0,
+    // -128 is the "no reading" sentinel: 0 degC is a real temperature.
+    BATT_TEMP_C: s.batt_temp_c == null ? -128 : s.batt_temp_c | 0,
     UPDATED_AT: parseIsoSeconds(s.updated_at),
     UNIT_MILES: getConfig().unitMiles ? 1 : 0
   };
@@ -143,6 +153,7 @@ var currentVehicleId = null;
 // through a connectivity blip, but a proxy or Kia failure must not turn
 // the 15s poll into a cache-bypassing retry storm — that would unbound
 // exactly the upstream call rate LIVE_REFRESH_MIN_SECONDS exists to cap.
+// Also armed once after a successful action — see handleActionRequest.
 var needFreshStatus = true;
 
 function handleListRequest() {
@@ -192,6 +203,28 @@ function handleStatusRequest(vehicleId, force) {
   fetchAndDispatch(vehicleId, force);
 }
 
+function handleActionRequest(vehicleId, action) {
+  if (!vehicleId) return sendError('No vehicle selected');
+  if (!action) return sendError('No action given');
+  var path = '/vehicles/' + encodeURIComponent(vehicleId) +
+             '/actions/' + encodeURIComponent(action);
+  httpPost(path, function (err) {
+    if (err) return sendError(err.message);
+    Pebble.sendAppMessage({ RESP_KIND: 'action_ok', ACTION: action },
+      null, function () {
+        sendError('Watch inbox full');
+      });
+    // The car reports its new state to Kia moments after executing a
+    // command, so one ordinary cache-bypassing read shows the outcome
+    // without waking anything. Deliberate reuse of the launch flag.
+    setTimeout(function () {
+      if (currentVehicleId !== vehicleId) return;
+      needFreshStatus = true;
+      fetchAndDispatch(vehicleId, false);
+    }, 8000);
+  });
+}
+
 // --- Polling loop ----------------------------------------------------
 //
 // Kicks off once on ready and then every POLL_MS while the companion is
@@ -227,6 +260,7 @@ Pebble.addEventListener('appmessage', function (e) {
   if (kind === 'list') return handleListRequest();
   if (kind === 'status') return handleStatusRequest(id, false);
   if (kind === 'refresh') return handleStatusRequest(id, true);
+  if (kind === 'action') return handleActionRequest(id, p.ACTION);
   sendError('Bad request from watch');
 });
 

@@ -2,6 +2,7 @@
 
 #include "app_state.h"
 #include "ipc.h"
+#include "ui_actions.h"
 #include "ui_detail.h"
 #include "ui_main.h"
 
@@ -33,6 +34,7 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  ui_actions_deinit();
   ui_detail_deinit();
   ui_main_deinit();
   ipc_deinit();

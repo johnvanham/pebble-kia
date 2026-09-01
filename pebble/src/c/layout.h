@@ -29,7 +29,6 @@
 #define LAYOUT_D_SPINNER 18
 #define LAYOUT_FONT_ROW_LABEL FONT_KEY_GOTHIC_18
 #define LAYOUT_FONT_ROW_VALUE FONT_KEY_GOTHIC_24_BOLD
-#define LAYOUT_FONT_ROW_VALUE_SMALL FONT_KEY_GOTHIC_18_BOLD
 #define LAYOUT_GAP 6
 
 #else
@@ -53,33 +52,26 @@
 #define LAYOUT_D_SPINNER 14
 #define LAYOUT_FONT_ROW_LABEL FONT_KEY_GOTHIC_14
 #define LAYOUT_FONT_ROW_VALUE FONT_KEY_GOTHIC_18_BOLD
-#define LAYOUT_FONT_ROW_VALUE_SMALL FONT_KEY_GOTHIC_14_BOLD
 #define LAYOUT_GAP 4
 
 #endif
 
-// Detail rows are sized by how many have to fit between the margins,
-// which is why the row height lives with the padding rather than with
-// the fonts. Round displays lose enough height to the bezel margins
-// that the seven-row charging case only fits if the rows tighten up.
-// LAYOUT_H_ROW is the comfortable maximum; LAYOUT_H_ROW_MIN_VALUE is
-// the shortest row the full-size value font can be drawn in without
-// losing its descenders, below which the smaller face is used.
+// Detail rows are a fixed height and the row region scrolls, so the
+// height is chosen for the value font's legibility rather than for how
+// many rows fit — the padding decides where the scrolling viewport
+// starts and ends.
 #if defined(PBL_ROUND)
 #define LAYOUT_PAD_V 16
 #define LAYOUT_PAD_H 4
 #define LAYOUT_H_ROW 20
-#define LAYOUT_H_ROW_MIN_VALUE 16
 #elif defined(PBL_PLATFORM_EMERY)
 #define LAYOUT_PAD_V 5
 #define LAYOUT_PAD_H 8
 #define LAYOUT_H_ROW 30
-#define LAYOUT_H_ROW_MIN_VALUE 22
 #else
 #define LAYOUT_PAD_V 2
 #define LAYOUT_PAD_H 4
 #define LAYOUT_H_ROW 22
-#define LAYOUT_H_ROW_MIN_VALUE 16
 #endif
 
 // Horizontal band of the screen at [y, y + h), padded and — on a round

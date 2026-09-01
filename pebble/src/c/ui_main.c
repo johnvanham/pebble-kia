@@ -5,40 +5,12 @@
 #include "app_state.h"
 #include "ipc.h"
 #include "layout.h"
+#include "spinner.h"
 #include "ui_detail.h"
 #include "units.h"
 
 static Window *s_window;
 static Layer *s_canvas;
-static AppTimer *s_spinner_timer = NULL;
-static int32_t s_spinner_angle = 0;
-
-// Tick every 100 ms while busy — fast enough to look smooth, slow
-// enough not to wake the CPU hard. Each step rotates the arc by 1/12
-// of a full turn, i.e. ~100 deg/s.
-#define SPINNER_TICK_MS 100
-#define SPINNER_STEP (TRIG_MAX_ANGLE / 12)
-
-static void spinner_tick(void *ctx);
-
-static void spinner_start(void) {
-  if (s_spinner_timer) return;
-  s_spinner_timer = app_timer_register(SPINNER_TICK_MS, spinner_tick, NULL);
-}
-
-static void spinner_stop(void) {
-  if (s_spinner_timer) {
-    app_timer_cancel(s_spinner_timer);
-    s_spinner_timer = NULL;
-  }
-}
-
-static void spinner_tick(void *ctx) {
-  s_spinner_timer = NULL;
-  s_spinner_angle = (s_spinner_angle + SPINNER_STEP) % TRIG_MAX_ANGLE;
-  if (s_canvas) layer_mark_dirty(s_canvas);
-  if (app_state_is_busy() && !app_state_error()) spinner_start();
-}
 
 static const char *plug_label(PlugState p) {
   switch (p) {
@@ -103,17 +75,16 @@ static const GPathInfo BOLT_PATH_INFO = {
 };
 static GPath *s_bolt;
 
-static void draw_charge_bolt(GContext *ctx, GRect soc_rect, GSize num_size,
+static void draw_charge_bolt(GContext *ctx, GRect soc_row, int16_t digits_x,
                              bool charging) {
   if (!s_bolt) return;
-  int16_t x = soc_rect.origin.x + soc_rect.size.w - num_size.w -
-              BOLT_UNIT(10) - LAYOUT_GAP;
+  int16_t x = digits_x - BOLT_UNIT(10) - LAYOUT_GAP;
   // "100" on chalk's narrow chord can leave no room; drop the glyph
   // rather than overlap the digits.
-  if (x < soc_rect.origin.x) return;
+  if (x < soc_row.origin.x) return;
   // The digits sit below the centre of their line box (top bearing),
   // so the glyph is nudged down to centre on the ink rather than the box.
-  int16_t bolt_y = soc_rect.origin.y + (LAYOUT_H_SOC - BOLT_H) / 2 +
+  int16_t bolt_y = soc_row.origin.y + (LAYOUT_H_SOC - BOLT_H) / 2 +
                    BOLT_H / 8;
   gpath_move_to(s_bolt, GPoint(x, bolt_y));
   if (charging) {
@@ -144,19 +115,6 @@ static void draw_charge_bolt(GContext *ctx, GRect soc_rect, GSize num_size,
     graphics_context_set_stroke_width(ctx, 1);
     graphics_context_set_stroke_color(ctx, GColorWhite);
   }
-}
-
-static void draw_spinner(GContext *ctx, GRect box) {
-#ifdef PBL_COLOR
-  graphics_context_set_stroke_color(ctx, GColorChromeYellow);
-#else
-  graphics_context_set_stroke_color(ctx, GColorWhite);
-#endif
-  graphics_context_set_stroke_width(ctx, 2);
-  graphics_draw_arc(ctx, box, GOvalScaleModeFitCircle,
-                    s_spinner_angle,
-                    s_spinner_angle + (TRIG_MAX_ANGLE * 3 / 4));
-  graphics_context_set_stroke_width(ctx, 1);
 }
 
 static void draw_centered_message(GContext *ctx, GRect b, const char *title,
@@ -190,7 +148,7 @@ static void draw_indicator(GContext *ctx, GRect b) {
                        NULL);
     graphics_context_set_text_color(ctx, GColorWhite);
   } else if (app_state_is_busy()) {
-    draw_spinner(ctx, GRect(right - LAYOUT_D_SPINNER, row.origin.y,
+    spinner_draw(ctx, GRect(right - LAYOUT_D_SPINNER, row.origin.y,
                             LAYOUT_D_SPINNER, LAYOUT_D_SPINNER));
   }
 }
@@ -248,27 +206,32 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   int16_t y = block_top + (status_y - block_top - block_h) / 2;
   if (y < block_top) y = block_top;
 
-  // --- Big SoC number ---
+  // --- Big SoC number, centred as a group (digits then "%") so one-,
+  // two- and three-digit readings all sit in the middle of the row.
+  // The bolt hangs off the left of the group rather than joining it:
+  // charging toggling on and off should not shove the number sideways.
   GFont soc_font = fonts_get_system_font(LAYOUT_FONT_SOC);
   char soc_buf[8];
   snprintf(soc_buf, sizeof(soc_buf), "%d", v->soc_pct);
   GRect soc_row = layout_row(b, y, LAYOUT_H_SOC);
-  GRect soc_rect = GRect(soc_row.origin.x, y, soc_row.size.w - LAYOUT_W_PCT,
-                         LAYOUT_H_SOC);
-  graphics_draw_text(ctx, soc_buf, soc_font, soc_rect,
-                     GTextOverflowModeWordWrap, GTextAlignmentRight, NULL);
+  GSize num_size = graphics_text_layout_get_content_size(
+      soc_buf, soc_font, soc_row, GTextOverflowModeWordWrap,
+      GTextAlignmentLeft);
+  int16_t digits_x =
+      soc_row.origin.x + (soc_row.size.w - num_size.w - LAYOUT_W_PCT) / 2;
+  if (digits_x < soc_row.origin.x) digits_x = soc_row.origin.x;
+  graphics_draw_text(ctx, soc_buf, soc_font,
+                     GRect(digits_x, y, num_size.w, LAYOUT_H_SOC),
+                     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
   GFont pct_font = fonts_get_system_font(LAYOUT_FONT_PCT);
-  GRect pct_rect = GRect(soc_row.origin.x + soc_row.size.w - LAYOUT_W_PCT,
+  GRect pct_rect = GRect(digits_x + num_size.w,
                          y + LAYOUT_H_SOC - LAYOUT_H_PCT - 2, LAYOUT_W_PCT,
                          LAYOUT_H_PCT);
   graphics_draw_text(ctx, "%", pct_font, pct_rect, GTextOverflowModeWordWrap,
                      GTextAlignmentLeft, NULL);
 
-  GSize num_size = graphics_text_layout_get_content_size(
-      soc_buf, soc_font, soc_rect, GTextOverflowModeWordWrap,
-      GTextAlignmentRight);
-  draw_charge_bolt(ctx, soc_rect, num_size, v->is_charging);
+  draw_charge_bolt(ctx, soc_row, digits_x, v->is_charging);
 
   // --- Battery bar ---
   y += LAYOUT_H_SOC + LAYOUT_GAP;
@@ -311,9 +274,9 @@ static void canvas_update(Layer *layer, GContext *ctx) {
 }
 
 static void on_state_changed(void) {
-  if (s_canvas) layer_mark_dirty(s_canvas);
-  if (app_state_is_busy() && !app_state_error()) spinner_start();
-  else spinner_stop();
+  if (!s_canvas) return;
+  layer_mark_dirty(s_canvas);
+  spinner_sync(s_canvas);
 }
 
 // With one vehicle, switching is a no-op but the status request would
@@ -410,9 +373,15 @@ static void window_load(Window *window) {
   app_state_subscribe(on_state_changed);
 }
 
+static void window_appear(Window *window) {
+  // Take the spinner back from the window that just popped; without
+  // this the arc freezes until the next state change.
+  on_state_changed();
+}
+
 static void window_unload(Window *window) {
-  spinner_stop();
   if (s_canvas) {
+    spinner_detach(s_canvas);
     layer_destroy(s_canvas);
     s_canvas = NULL;
   }
@@ -425,6 +394,7 @@ void ui_main_push(void) {
     window_set_click_config_provider(s_window, click_config);
     window_set_window_handlers(s_window, (WindowHandlers){
                                              .load = window_load,
+                                             .appear = window_appear,
                                              .unload = window_unload,
                                          });
   }

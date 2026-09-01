@@ -4,7 +4,8 @@
 
 #include "app_state.h"
 
-static void send_request(const char *kind, const char *id) {
+static void send_request(const char *kind, const char *id,
+                         const char *action) {
   // Clear any previous error optimistically — if this send (or the reply)
   // fails, the error will be re-set. Without this, a stale error hides
   // the busy indicator on retry and the user can't tell the retry fired.
@@ -19,6 +20,7 @@ static void send_request(const char *kind, const char *id) {
   }
   dict_write_cstring(out, MESSAGE_KEY_REQ_KIND, kind);
   if (id != NULL) dict_write_cstring(out, MESSAGE_KEY_REQ_ID, id);
+  if (action != NULL) dict_write_cstring(out, MESSAGE_KEY_ACTION, action);
   r = app_message_outbox_send();
   if (r != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "outbox_send failed: %d", (int)r);
@@ -29,12 +31,18 @@ static void send_request(const char *kind, const char *id) {
 }
 
 void ipc_request_list(void) {
-  send_request("list", NULL);
+  send_request("list", NULL, NULL);
 }
 
 void ipc_request_status(const char *id, bool force) {
   if (id == NULL || id[0] == 0) return;
-  send_request(force ? "refresh" : "status", id);
+  send_request(force ? "refresh" : "status", id, NULL);
+}
+
+void ipc_request_action(const char *id, const char *action) {
+  if (id == NULL || id[0] == 0) return;
+  app_state_set_action_ok(false);
+  send_request("action", id, action);
 }
 
 // The outbox carries one message at a time, so a vehicle picked while a
@@ -88,6 +96,10 @@ static void handle_status(DictionaryIterator *in) {
   Tuple *id_t = dict_find(in, MESSAGE_KEY_STATUS_ID);
   if (!id_t) return;
   VehicleStatus s = {0};
+  // A missing key must read as "not reported", and for the battery
+  // temperature 0 is a real reading, so the sentinel has to be seeded
+  // before the unpack rather than relied on from the zero-init.
+  s.batt_temp_c = BATT_TEMP_NONE;
   Tuple *t;
   if ((t = dict_find(in, MESSAGE_KEY_SOC_PCT)))         s.soc_pct = t->value->uint8;
   if ((t = dict_find(in, MESSAGE_KEY_RANGE_KM)))        s.range_km = t->value->uint32;
@@ -100,6 +112,15 @@ static void handle_status(DictionaryIterator *in) {
   if ((t = dict_find(in, MESSAGE_KEY_ODO_KM)))          s.odo_km = t->value->uint32;
   if ((t = dict_find(in, MESSAGE_KEY_IS_CLIMATE_ON)))   s.is_climate_on = t->value->uint8 != 0;
   if ((t = dict_find(in, MESSAGE_KEY_AUX_BATTERY_PCT))) s.aux_battery_pct = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_CHARGE_LIM_AC)))   s.charge_limit_ac = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_CHARGE_LIM_DC)))   s.charge_limit_dc = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_DOORS_OPEN)))      s.doors_open = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_WINDOWS_OPEN)))    s.windows_open = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_TRUNK_OPEN)))      s.trunk_open = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_HOOD_OPEN)))       s.hood_open = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_SUNROOF_OPEN)))    s.sunroof_open = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_EFF_KMPKWH_X10)))  s.eff_kmpkwh_x10 = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_BATT_TEMP_C)))     s.batt_temp_c = t->value->int8;
   if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))      s.updated_at = (time_t)t->value->uint32;
   app_state_clear_error();
   app_state_apply_status(id_t->value->cstring, &s);
@@ -123,6 +144,9 @@ static void inbox_received(DictionaryIterator *in, void *ctx) {
     handle_list(in);
   } else if (strcmp(kind, "status") == 0) {
     handle_status(in);
+  } else if (strcmp(kind, "action_ok") == 0) {
+    app_state_clear_error();
+    app_state_set_action_ok(true);
   } else if (strcmp(kind, "ready") == 0) {
     // Companion (re)connected. The first ready triggers the deferred
     // initial fetch — restored vehicles still need it, flash only saved

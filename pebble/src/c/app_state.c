@@ -11,7 +11,7 @@
 // is 256 bytes per key and four Vehicles do not fit in one. Bump the
 // schema whenever the record's layout changes — reading a stale blob
 // into a changed struct is how the screen fills with garbage.
-#define PERSIST_SCHEMA_VERSION 2
+#define PERSIST_SCHEMA_VERSION 3
 #define PERSIST_KEY_SCHEMA 1
 #define PERSIST_KEY_COUNT 2
 #define PERSIST_KEY_UNIT_MILES 3
@@ -27,6 +27,7 @@ static int s_vehicle_count = 0;
 static int s_current_index = 0;
 static AppPhase s_phase = APP_PHASE_LOADING_LIST;
 static bool s_busy = false;
+static bool s_action_ok = false;
 static bool s_unit_miles = PBK_USE_MILES_DEFAULT;  // companion's UNIT_MILES overrides
 static char s_error[APP_ERROR_LEN] = {0};
 // Latched for the whole run of failures so the buzz fires on the
@@ -93,6 +94,7 @@ void app_state_init(void) {
   s_current_index = 0;
   s_phase = APP_PHASE_LOADING_LIST;
   s_busy = false;
+  s_action_ok = false;
   s_error[0] = 0;
   s_error_buzzed = false;
   s_listener_count = 0;
@@ -173,6 +175,15 @@ void app_state_apply_vehicle_list(const char (*ids)[VEHICLE_ID_LEN],
         s_vehicles[i].odo_km = prev[j].odo_km;
         s_vehicles[i].is_climate_on = prev[j].is_climate_on;
         s_vehicles[i].aux_battery_pct = prev[j].aux_battery_pct;
+        s_vehicles[i].charge_limit_ac = prev[j].charge_limit_ac;
+        s_vehicles[i].charge_limit_dc = prev[j].charge_limit_dc;
+        s_vehicles[i].doors_open = prev[j].doors_open;
+        s_vehicles[i].windows_open = prev[j].windows_open;
+        s_vehicles[i].trunk_open = prev[j].trunk_open;
+        s_vehicles[i].hood_open = prev[j].hood_open;
+        s_vehicles[i].sunroof_open = prev[j].sunroof_open;
+        s_vehicles[i].eff_kmpkwh_x10 = prev[j].eff_kmpkwh_x10;
+        s_vehicles[i].batt_temp_c = prev[j].batt_temp_c;
         s_vehicles[i].updated_at = prev[j].updated_at;
         break;
       }
@@ -204,6 +215,15 @@ void app_state_apply_status(const char *id, const VehicleStatus *status) {
       v->odo_km = status->odo_km;
       v->is_climate_on = status->is_climate_on;
       v->aux_battery_pct = status->aux_battery_pct;
+      v->charge_limit_ac = status->charge_limit_ac;
+      v->charge_limit_dc = status->charge_limit_dc;
+      v->doors_open = status->doors_open;
+      v->windows_open = status->windows_open;
+      v->trunk_open = status->trunk_open;
+      v->hood_open = status->hood_open;
+      v->sunroof_open = status->sunroof_open;
+      v->eff_kmpkwh_x10 = status->eff_kmpkwh_x10;
+      v->batt_temp_c = status->batt_temp_c;
       v->updated_at = status->updated_at;
       s_error_buzzed = false;
       // Only write when a reading the user can see has moved. The
@@ -247,6 +267,14 @@ void app_state_clear_error(void) {
 void app_state_set_busy(bool busy) {
   if (s_busy == busy) return;
   s_busy = busy;
+  app_state_notify();
+}
+
+bool app_state_action_ok(void) { return s_action_ok; }
+
+void app_state_set_action_ok(bool ok) {
+  if (s_action_ok == ok) return;
+  s_action_ok = ok;
   app_state_notify();
 }
 

@@ -16,6 +16,11 @@ typedef enum {
   PLUG_DC = 2,
 } PlugState;
 
+// The companion sends -128 for a battery temperature the proxy did not
+// report; 0 is a reading a real battery can give, so it cannot be the
+// sentinel the way it is for the other "not reported" fields.
+#define BATT_TEMP_NONE (-128)
+
 typedef struct {
   char id[VEHICLE_ID_LEN];
   char nickname[VEHICLE_NICK_LEN];
@@ -31,6 +36,15 @@ typedef struct {
   uint32_t odo_km;
   bool is_climate_on;
   uint8_t aux_battery_pct;
+  uint8_t charge_limit_ac;
+  uint8_t charge_limit_dc;
+  uint8_t doors_open;
+  uint8_t windows_open;
+  bool trunk_open;
+  bool hood_open;
+  bool sunroof_open;
+  uint16_t eff_kmpkwh_x10;
+  int8_t batt_temp_c;
   time_t updated_at;
 } Vehicle;
 
@@ -46,6 +60,15 @@ typedef struct {
   uint32_t odo_km;
   bool is_climate_on;
   uint8_t aux_battery_pct;
+  uint8_t charge_limit_ac;
+  uint8_t charge_limit_dc;
+  uint8_t doors_open;
+  uint8_t windows_open;
+  bool trunk_open;
+  bool hood_open;
+  bool sunroof_open;
+  uint16_t eff_kmpkwh_x10;
+  int8_t batt_temp_c;
   time_t updated_at;
 } VehicleStatus;
 
@@ -80,6 +103,12 @@ void app_state_apply_status(const char *id, const VehicleStatus *status);
 void app_state_set_error(const char *msg);
 void app_state_clear_error(void);
 void app_state_set_busy(bool busy);
+
+// Whether the most recent vehicle action was acknowledged. Transient:
+// firing another action clears it, and the actions menu clears it when
+// it closes, so "Sent" never outlives the screen it was earned on.
+bool app_state_action_ok(void);
+void app_state_set_action_ok(bool ok);
 
 typedef void (*AppStateListener)(void);
 void app_state_subscribe(AppStateListener listener);

@@ -14,6 +14,16 @@ int format_distance_km(uint32_t km, char *buf, size_t sz) {
   return snprintf(buf, sz, "%lu km", (unsigned long)km);
 }
 
+int format_efficiency(uint16_t kmpkwh_x10, char *buf, size_t sz) {
+  if (kmpkwh_x10 == 0) return snprintf(buf, sz, "--");
+  unsigned long v = kmpkwh_x10;
+  if (app_state_unit_miles()) {
+    v = (v * 1000UL + 804UL) / 1609UL;
+    return snprintf(buf, sz, "%lu.%lu mi/kWh", v / 10, v % 10);
+  }
+  return snprintf(buf, sz, "%lu.%lu km/kWh", v / 10, v % 10);
+}
+
 void format_age(time_t when, char *buf, size_t sz) {
   if (when == 0) {
     snprintf(buf, sz, "--");

@@ -45,7 +45,17 @@
       "UPDATED_AT",
       "UNIT_MILES",
       "ERROR_MSG",
-      "AUX_BATTERY_PCT"
+      "AUX_BATTERY_PCT",
+      "CHARGE_LIM_AC",
+      "CHARGE_LIM_DC",
+      "DOORS_OPEN",
+      "WINDOWS_OPEN",
+      "TRUNK_OPEN",
+      "HOOD_OPEN",
+      "SUNROOF_OPEN",
+      "EFF_KMPKWH_X10",
+      "BATT_TEMP_C",
+      "ACTION"
     ],
     "resources": {
       "media": [
