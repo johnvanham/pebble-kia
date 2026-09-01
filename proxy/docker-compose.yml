@@ -6,28 +6,21 @@ services:
     restart: unless-stopped
     depends_on:
       - ntfy
+    # Handed to the container verbatim. Listing each variable under
+    # `environment:` instead would run every value through compose's
+    # ${...} interpolation first, which silently eats a '$' in a Kia
+    # password — the app then fails to log in with credentials that are
+    # demonstrably correct everywhere else.
+    env_file:
+      - .env
     environment:
-      - PROXY_BEARER_TOKEN=${PROXY_BEARER_TOKEN:?set PROXY_BEARER_TOKEN in .env}
-      - DATA_SOURCE=${DATA_SOURCE:-demo}
+      # Only the values that must differ inside the container. These win
+      # over env_file, so .env can keep host-side paths.
       - DEMO_DATA_FILE=/app/demo-data.json
-      - LIVE_REFRESH_MIN_SECONDS=${LIVE_REFRESH_MIN_SECONDS:-600}
-      - DEMO_REFRESH_MIN_SECONDS=${DEMO_REFRESH_MIN_SECONDS:-5}
-      - LIVE_FORCE_MIN_SECONDS=${LIVE_FORCE_MIN_SECONDS:-900}
-      # Unset on purpose — the app picks 20s for demo, 300s for live.
-      - DETECTOR_INTERVAL_SECONDS=${DETECTOR_INTERVAL_SECONDS:-}
-      # Only read when DATA_SOURCE=live.
-      - KIA_USERNAME=${KIA_USERNAME:-}
-      - KIA_PASSWORD=${KIA_PASSWORD:-}
-      - KIA_PIN=${KIA_PIN:-}
-      - KIA_REGION=${KIA_REGION:-1}
-      - KIA_BRAND=${KIA_BRAND:-1}
       - PROXY_STATE_DB=/app/state/state.db
       # Proxy reaches ntfy over the compose network. External clients
       # (phone subscribers) go through Caddy at NTFY_PUBLIC_URL.
       - NTFY_URL=${NTFY_URL:-http://ntfy:80}
-      - NTFY_TOPIC=${NTFY_TOPIC:-}
-      - NTFY_AUTH_TOKEN=${NTFY_AUTH_TOKEN:-}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       # Bind-mount the demo JSON so edits on the host are picked up by the
       # next forced refresh without a container rebuild.
