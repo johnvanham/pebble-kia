@@ -36,7 +36,11 @@ services:
       # restarts so the watch isn't waiting on a cold fetch.
       - proxy-state:/app/state
     ports:
-      - "127.0.0.1:8000:8000"
+      # Loopback by default: the intended deployment puts Caddy in front
+      # and lets it own TLS. Set PROXY_BIND=0.0.0.0 to reach it directly
+      # from the LAN — handy for a first run against a phone, but the
+      # bearer token then crosses the network in clear text.
+      - "${PROXY_BIND:-127.0.0.1}:8000:8000"
 
   ntfy:
     image: binwiederhier/ntfy:latest
