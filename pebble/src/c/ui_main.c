@@ -82,6 +82,70 @@ static void draw_battery(GContext *ctx, GRect r, uint8_t soc_pct,
   graphics_fill_rect(ctx, fill_r, 0, GCornerNone);
 }
 
+// Charging state as a glyph beside the SoC number: a filled bolt while
+// charging, the same bolt as an outline while idle. Filled-vs-hollow
+// carries the distinction on the 1-bit platforms, where the green the
+// battery bar uses isn't available. The path is sized off LAYOUT_H_SOC
+// at compile time; 16 is the path's own unit height.
+#define BOLT_H ((LAYOUT_H_SOC * 5) / 12)
+#define BOLT_UNIT(u) ((u) * BOLT_H / 16)
+// The waist (the band where the two crossbars overlap, unit y 6..10)
+// is deliberately thick: at ~20px tall a slimmer bolt loses its middle
+// to integer scaling and the filled glyph falls apart into two blobs.
+static const GPathInfo BOLT_PATH_INFO = {
+    .num_points = 6,
+    .points = (GPoint[]){{BOLT_UNIT(7), 0},
+                         {0, BOLT_UNIT(10)},
+                         {BOLT_UNIT(4), BOLT_UNIT(10)},
+                         {BOLT_UNIT(3), BOLT_H},
+                         {BOLT_UNIT(10), BOLT_UNIT(6)},
+                         {BOLT_UNIT(6), BOLT_UNIT(6)}},
+};
+static GPath *s_bolt;
+
+static void draw_charge_bolt(GContext *ctx, GRect soc_rect, GSize num_size,
+                             bool charging) {
+  if (!s_bolt) return;
+  int16_t x = soc_rect.origin.x + soc_rect.size.w - num_size.w -
+              BOLT_UNIT(10) - LAYOUT_GAP;
+  // "100" on chalk's narrow chord can leave no room; drop the glyph
+  // rather than overlap the digits.
+  if (x < soc_rect.origin.x) return;
+  // The digits sit below the centre of their line box (top bearing),
+  // so the glyph is nudged down to centre on the ink rather than the box.
+  int16_t bolt_y = soc_rect.origin.y + (LAYOUT_H_SOC - BOLT_H) / 2 +
+                   BOLT_H / 8;
+  gpath_move_to(s_bolt, GPoint(x, bolt_y));
+  if (charging) {
+#ifdef PBL_COLOR
+    graphics_context_set_fill_color(ctx, GColorIslamicGreen);
+    graphics_context_set_stroke_color(ctx, GColorIslamicGreen);
+#else
+    graphics_context_set_fill_color(ctx, GColorWhite);
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+#endif
+    // Fill plus outline: the scanline fill on its own eats the bolt's
+    // thin tips at the smaller platforms' glyph size.
+    gpath_draw_filled(ctx, s_bolt);
+    graphics_context_set_stroke_width(ctx, BOLT_H >= 22 ? 2 : 1);
+    gpath_draw_outline(ctx, s_bolt);
+    graphics_context_set_stroke_width(ctx, 1);
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+  } else {
+#ifdef PBL_COLOR
+    graphics_context_set_stroke_color(ctx, GColorLightGray);
+#else
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+#endif
+    // A 2px stroke fills the glyph in at the smaller platforms' size,
+    // making idle look bolder than charging.
+    graphics_context_set_stroke_width(ctx, BOLT_H >= 22 ? 2 : 1);
+    gpath_draw_outline(ctx, s_bolt);
+    graphics_context_set_stroke_width(ctx, 1);
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+  }
+}
+
 static void draw_spinner(GContext *ctx, GRect box) {
 #ifdef PBL_COLOR
   graphics_context_set_stroke_color(ctx, GColorChromeYellow);
@@ -200,6 +264,11 @@ static void canvas_update(Layer *layer, GContext *ctx) {
                          LAYOUT_H_PCT);
   graphics_draw_text(ctx, "%", pct_font, pct_rect, GTextOverflowModeWordWrap,
                      GTextAlignmentLeft, NULL);
+
+  GSize num_size = graphics_text_layout_get_content_size(
+      soc_buf, soc_font, soc_rect, GTextOverflowModeWordWrap,
+      GTextAlignmentRight);
+  draw_charge_bolt(ctx, soc_rect, num_size, v->is_charging);
 
   // --- Battery bar ---
   y += LAYOUT_H_SOC + LAYOUT_GAP;
@@ -322,6 +391,8 @@ static void window_load(Window *window) {
   layer_set_update_proc(s_canvas, canvas_update);
   layer_add_child(root, s_canvas);
 
+  if (!s_bolt) s_bolt = gpath_create(&BOLT_PATH_INFO);
+
 #if PBL_API_EXISTS(window_attach_recognizer)
   // The window owns these recognizers and destroys them on unload, so
   // each load attaches fresh ones — not a leak. Disabling the touch
@@ -361,6 +432,10 @@ void ui_main_push(void) {
 }
 
 void ui_main_deinit(void) {
+  if (s_bolt) {
+    gpath_destroy(s_bolt);
+    s_bolt = NULL;
+  }
   if (s_window) {
     window_destroy(s_window);
     s_window = NULL;
