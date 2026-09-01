@@ -13,26 +13,32 @@ local-dev iteration tips.
 
 ## Status
 
-Phase 2: skeleton with a pluggable data-source layer. Only the `demo`
-source is implemented — it reads `demo-data.json` and re-reads on every
-fetch so you can edit the file to simulate changing vehicle state. The
-`live` source is a stub that returns HTTP 501 until phase 3 wires up
-`hyundai_kia_connect_api`.
+All phases built. Two data sources sit behind one cache: `demo` reads
+`DEMO_DATA_FILE` on every fetch (a static snapshot or a time-evolving
+scenario), and `live` wraps `hyundai_kia_connect_api` against the real
+Kia account, with the refresh token and last-known state persisted to
+SQLite so restarts cost neither a login nor a cold watch screen.
 
 ## Endpoints
 
 All routes except `/health` require `Authorization: Bearer <token>`.
 
-| Method | Path                               | Purpose                                     |
-| ------ | ---------------------------------- | ------------------------------------------- |
-| GET    | `/health`                          | Liveness + which data source is active      |
-| GET    | `/vehicles`                        | Account vehicles: id, VIN, nickname, model  |
-| GET    | `/vehicles/{id}/status[?force=1]`  | Cached status; `force=1` bypasses the cache |
-| POST   | `/vehicles/{id}/refresh`           | Explicit bypass — same rate limit as force  |
+| Method | Path                                | Purpose                                     |
+| ------ | ----------------------------------- | ------------------------------------------- |
+| GET    | `/health`                           | Liveness + which data source is active      |
+| GET    | `/vehicles`                         | Account vehicles: id, VIN, nickname, model  |
+| GET    | `/vehicles/{id}/status[?force=1][?fresh=1]` | Cached status; see the flags below  |
+| POST   | `/vehicles/{id}/refresh`            | Same as `force=1` — wakes the vehicle       |
 
-`force=1` and `/refresh` still count against the per-vehicle interval on
-the live source to protect the 12V battery; on the demo source the same
-call just re-reads the JSON file.
+Two flags, two very different costs. `force=1` (and `/refresh`) wakes
+the telematics unit for genuinely current data; it draws on the 12V
+battery, so `LIVE_FORCE_MIN_SECONDS` floors it and a force inside the
+window is downgraded to an ordinary read — served from cache when the
+entry is still fresh — with `forced: false`. `fresh=1` is
+an ordinary read that skips the `LIVE_REFRESH_MIN_SECONDS` cache window
+— it asks Kia's servers for the state they already hold and never wakes
+the car; the watch sends it once per launch. When both are sent, force
+semantics win.
 
 ## Run locally
 
@@ -142,11 +148,11 @@ can reach the container — nothing is exposed to the internet directly.
 All settings are environment variables (see `.env.example`):
 
 - `PROXY_BEARER_TOKEN` — required; clients send this as `Authorization: Bearer …`.
-- `DATA_SOURCE` — `demo` (default) or `live`. `live` currently 501s on every call.
+- `DATA_SOURCE` — `demo` (default) or `live`. `live` needs the `KIA_*` variables; see `.env.example`.
 - `DEMO_DATA_FILE` — path to the JSON file the demo source reads. Relative paths resolve against the working directory.
 - `LIVE_REFRESH_MIN_SECONDS` — min seconds between live pulls on the live source. Defaults to 600. Protects the 12V battery from aggressive polling.
 - `DEMO_REFRESH_MIN_SECONDS` — same knob, demo source. Defaults to 5 so scenario progression is visible to polling clients.
-- `DETECTOR_INTERVAL_SECONDS` — how often the transition detector polls its source to diff for notifications. Defaults to 20.
+- `DETECTOR_INTERVAL_SECONDS` — how often the transition detector polls its source to diff for notifications. Unset means per-source defaults: 20 on demo, 300 on live.
 - `NTFY_URL` / `NTFY_TOPIC` / `NTFY_AUTH_TOKEN` — push-notification destination. Leave `NTFY_URL` empty to disable. See "Notifications" below.
 - `SETUP_QR_DIR` — directory the setup QR images are written to at startup. Defaults to `setup/` inside the `proxy/` directory, resolved from the package rather than the working directory so it does not move with however the app was launched. Empty disables them.
 - `SETUP_QR_LOG` — also print the token QR into the startup log. Off by default; see "Setup QR" for why.

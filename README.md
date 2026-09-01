@@ -12,7 +12,7 @@ as a hosted service.
 
 | Component              | Status                                                     |
 | ---------------------- | ---------------------------------------------------------- |
-| Pebble watchapp (C)    | Laid out for emery; last-known state persisted for instant boot |
+| Pebble watchapp (C)    | Emery-first layout, touch + button controls, launcher icon, instant boot |
 | PebbleKit JS companion | Clay config page (proxy URL, token, miles/km toggle)       |
 | Self-hosted proxy      | FastAPI, `demo` + `live` sources, cache + rate limit       |
 | Scenario engine        | Time-evolving demos under `proxy/scenarios/`               |
@@ -20,13 +20,13 @@ as a hosted service.
 | Live Kia integration   | Real Kia Connect data; SQLite-persisted token and state    |
 | HA / dashboard clients | Future                                                     |
 
-Set `DATA_SOURCE=live` and the proxy serves the real vehicle. Demo mode
-still runs end to end for offline iteration: pick a scenario, the proxy
-replays charge curves / lock cycles / climate on/off, pushes arrive on
-the phone (and bridge to the watch) as standard OS notifications.
+The setup guide below runs against a real Kia Connect account. No Kia
+login? Everything also runs end to end against bundled demo data —
+scenarios replay charge curves, lock cycles and climate events, pushes
+and all, with no car and no physical watch. See [Demo mode](#demo-mode).
 
-The layout is tuned for the Pebble Time 2 (`emery`); basalt, diorite
-and chalk also build.
+The layout is tuned for the Pebble Time 2 (`emery`), the only target
+with a touchscreen; basalt, diorite and chalk also build.
 
 See [`DESIGN.md`](./DESIGN.md) for architecture, phased plan, operating
 assumptions, and the decision record around proxy vs. direct mode.
@@ -37,7 +37,7 @@ assumptions, and the decision record around proxy vs. direct mode.
 ┌──────────────┐  BT / AppMessage   ┌──────────────────┐   HTTPS   ┌──────────────┐   HTTPS    ┌────────────────┐
 │ Pebble watch │ ◀────────────────▶ │ Pebble mobile    │ ◀───────▶ │ Self-hosted  │ ◀────────▶ │ Kia Connect    │
 │ (C watchapp) │                    │ app + PebbleKit  │           │ proxy        │            │ EU servers     │
-└──────────────┘                    │ JS companion     │           │ (Docker)     │            │ (phase 3)      │
+└──────────────┘                    │ JS companion     │           │ (Docker)     │            │ (unofficial)   │
                                     └──────────────────┘           └──────────────┘            └────────────────┘
 ```
 
@@ -54,87 +54,28 @@ README.md          this file
 pebble/            Pebble watchapp
   package.json
   wscript
+  appstore.md      draft store listing (sideloads can't carry one)
+  resources/       launcher menu icon
+  tools/           icon generator, emulator touch injector
   src/c/           watchapp C source
   src/pkjs/        PebbleKit JS companion + Clay config page
-proxy/             FastAPI proxy (phase 2: demo data source only)
+proxy/             FastAPI proxy
   app/
   demo-data.json   editable sample payload
+  scenarios/       time-evolving demo payloads
   Dockerfile
   docker-compose.yml
   Caddyfile.example
 ```
 
-## Emulator quickstart
+## Setup
 
-Everything runs on one machine, no phone or physical watch needed.
-Useful for iterating on the watchapp UI or exercising the proxy.
-
-**One-off setup** — install the Pebble SDK and `uv`. See
-https://developer.repebble.com/sdk/ for platforms not listed here.
-
-```sh
-# Fedora
-sudo dnf install -y nodejs dtc SDL-devel SDL2 pixman glib2 uv
-# Arch
-sudo pacman -S --needed nodejs npm sdl2-compat glib2 pixman zlib libpng sndio uv
-
-uv tool install pebble-tool --python 3.13   # 3.14 is not supported yet
-pebble sdk install latest
-```
-
-Verified with pebble-tool 5.0.40 and SDK 4.33.1.
-
-**Run it**:
-
-```sh
-# terminal 1 — start the proxy
-cd proxy
-echo 'PROXY_BEARER_TOKEN=dev-token-change-me' > .env
-uv sync
-uv run uvicorn app.main:app --port 8000
-
-# terminal 2 — build and install the watchapp
-cd pebble
-npm install              # one-off: pulls pebble-clay
-pebble build
-pebble install --emulator emery      # or basalt / diorite / chalk
-
-# open the Clay config in your browser, fill in:
-#   Base URL     http://localhost:8000
-#   Bearer token dev-token-change-me   (matches what you set in proxy/.env)
-# click Save — values persist in the emulator's localStorage.
-pebble emu-app-config
-
-# First launch will have already failed with "Open Settings to configure
-# proxy"; long-press Select on the emulator (or re-install) to retry now
-# that config is saved.
-pebble logs --emulator emery         # tail APP_LOG + companion output
-```
-
-**Exercise a scenario** (time-evolving demo):
-
-```sh
-# stop the static proxy, then re-run pointing at a scenario
-DEMO_DATA_FILE=scenarios/pv5-rapid-charge.json uv run uvicorn app.main:app --port 8000
-
-# watch proxy-side push detection fire (no phone app needed — pushes
-# go to a NullNotifier when NTFY_TOPIC is unset, just logged)
-#   [INFO] notifier: would notify: PV5: Plugged in — DC
-#   [INFO] notifier: would notify: PV5: Charging — 180.0 kW • ETA 28 min
-```
-
-Pointing at real ntfy is the same command plus `NTFY_URL` and
-`NTFY_TOPIC`. See `proxy/README.md` → "Notifications".
-
-See [Controls](#controls) for what the buttons do.
-
-## Production setup
-
-Target layout: the proxy runs in a container on a home server, reachable
-at an HTTPS URL via a reverse proxy that owns TLS (Caddy is the default
-here; the author's Raspberry Pi already runs it with automatic Let's
-Encrypt). The watchapp is sideloaded onto a Pebble paired with the
-official Core Devices mobile app.
+Target layout: the proxy runs in a container on a home server, logged
+into your Kia account, reachable at an HTTPS URL via a reverse proxy
+that owns TLS (Caddy is the default here; the author's Raspberry Pi
+already runs it with automatic Let's Encrypt). The watchapp is
+sideloaded onto a Pebble paired with the official Core Devices mobile
+app.
 
 ### 1. Deploy the proxy
 
@@ -157,21 +98,12 @@ cp .env.example .env
 Only the `proxy/` subtree is needed on the server; you can sparse-check
 or scp just that directory if you prefer.
 
-**Edit `proxy/demo-data.json`** so the vehicle list matches what you
-actually want to see. `updated_at` accepts `"-2m"`-style relative
-offsets so a hand-edited file stays fresh. For a time-evolving demo
-(charging curves, lock/unlock cycles, climate events firing
-notifications on the watch), point `DEMO_DATA_FILE` at one of the
-scripted files under `proxy/scenarios/` — see `proxy/README.md` →
-"Scenario mode".
-
-**Or go live** — set `DATA_SOURCE=live` and add your Kia account to
-`.env`:
+**Add your Kia account** to `.env`:
 
 ```
 DATA_SOURCE=live
 KIA_USERNAME=you@example.com
-KIA_PASSWORD=...
+KIA_PASSWORD='...'
 KIA_PIN=
 KIA_REGION=1     # 1=Europe, 2=Canada, 3=USA, 4=China, 5=Australia
 KIA_BRAND=1      # 1=Kia, 2=Hyundai, 3=Genesis
@@ -179,17 +111,21 @@ KIA_BRAND=1      # 1=Kia, 2=Hyundai, 3=Genesis
 
 Same credentials as the official app — there is no browser bootstrap or
 token capture step. Accept any outstanding consent prompt in the Kia app
-first, or the first login fails. The refresh token is then cached in
+first, or the first login fails. Wrap the password in single quotes if
+it contains a `$` or a `#`: `docker compose` reads `.env` for its own
+interpolation, so an unquoted `$` silently truncates the password
+before the container ever sees it. The refresh token is cached in
 SQLite (`PROXY_STATE_DB`) so restarts don't re-login; the password is
 never written there.
 
 Two rate limits apply, and they are not the same thing.
 `LIVE_REFRESH_MIN_SECONDS` (600) bounds ordinary reads, which take the
-state Kia already holds and leave the car asleep.
-`LIVE_FORCE_MIN_SECONDS` (900) bounds the long-press refresh, which
-wakes the car and draws on its 12V battery. A long-press inside that
-window quietly returns cached data with `forced: false` rather than an
-error.
+state Kia already holds and leave the car asleep — launching the
+watchapp does one of these with `fresh=1` to skip the cache window, but
+it never wakes the car. `LIVE_FORCE_MIN_SECONDS` (900) bounds force
+refreshes (long-press Select, or drag down on a Pebble Time 2), which
+wake the car and draw on its 12V battery. A force inside that window
+quietly returns cached data with `forced: false` rather than an error.
 
 **Pick a push topic** — any guess-hard string (the topic name is the
 only access control on a default ntfy install). Add to `.env`:
@@ -217,11 +153,15 @@ skip the reverse proxy.
 
 ```sh
 curl -s http://127.0.0.1:8000/health
-# {"status":"ok","data_source":"demo"}
+# {"status":"ok","data_source":"live"}
 
 TOKEN=$(grep ^PROXY_BEARER_TOKEN .env | cut -d= -f2)
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/vehicles | jq .
 ```
+
+`/vehicles` should list your real vehicle(s). A "Kia login failed"
+error here is a credentials problem — see
+[Troubleshooting](#troubleshooting) before blaming anything else.
 
 **Add TLS via Caddy** — drop these blocks into the Caddy config
 (see `proxy/Caddyfile.example`) and point DNS at the server:
@@ -250,10 +190,57 @@ subscription with the URL above. Phone OS notifications from the ntfy
 app bridge to the watch automatically via the Pebble mobile app's
 notification forwarding; no watchapp-side setup needed.
 
+**Write the setup QR codes** — the bearer token is 64 hex characters
+and typing it on a phone keyboard is awful. On startup the proxy writes
+QR codes for it, so you can scan rather than type.
+
+Set the URL the phone should use in `proxy/.env` — the proxy has no way
+to know its own externally-reachable address, so if this is unset it
+writes the token code only:
+
+```
+PROXY_PUBLIC_URL=https://kia-proxy.example.com
+```
+
+Restart the proxy. Two images appear in `proxy/setup/`:
+
+```
+proxy/setup/bearer-token.png    the value for the Bearer token field
+proxy/setup/proxy-url.png       the value for the Base URL field
+```
+
+Open them on the machine running the proxy (`xdg-open proxy/setup/bearer-token.png`),
+scan with the phone's ordinary camera app, and paste the recognised text
+into the matching field in the watchapp's settings. The camera app copies
+the decoded string to the clipboard; there is no scanning built into the
+settings page itself, because Pebble serves the Clay config page as a
+`data:` URI, which is not a secure context and so cannot open a camera.
+
+Running in Docker on a headless box? The token QR can also go to the
+startup log, which is then the only channel you need. It is off by
+default, because a QR block in a log *is* the token in machine-readable
+form, and logs outlive token rotation, get shipped off the host by
+collectors, and end up pasted into issues. Turn it on deliberately:
+
+```
+SETUP_QR_LOG=1
+```
+
+```sh
+sudo docker compose logs proxy | head -40
+```
+
+Rotate the token if a log carrying it has gone anywhere you don't control.
+
+`proxy/setup/` is gitignored and written owner-only, because those images
+are a live credential in scannable form — treat them exactly like the
+`.env` they came from. Anyone who photographs your screen has your token.
+They are never served over HTTP.
+
 ### 2. Build and install the watchapp
 
-On a workstation with the Pebble SDK installed (see the
-[Emulator quickstart](#emulator-quickstart) for install commands):
+On a workstation with the Pebble SDK installed (see
+[Demo mode](#demo-mode) for the SDK install commands):
 
 ```sh
 cd pebble
@@ -265,8 +252,7 @@ pebble build
 #### On a physical watch
 
 These steps are for a Pebble Time 2 (or Pebble 2 Duo) — Core Devices
-hardware. They have not been run end to end on a watch yet; the build and
-the emulator path have. Corrections welcome.
+hardware.
 
 **Use the official Core Devices app, not the Rebble one.** Rebble does not
 publish a companion app — what `rebble.io/apk` distributes is the 2016
@@ -334,62 +320,13 @@ cd pebble && pebble install --cloudpebble --logs
 ```
 
 The watch vibrates when the install lands, and Kia appears in the app
-launcher.
+launcher with its own menu icon.
 
 #### In the emulator
 
-Already covered above. `pebble install --emulator emery` (or `basalt` /
-`diorite` / `chalk`) reinstalls any time you rebuild.
-
-#### Getting the token onto the phone
-
-The bearer token is 64 hex characters and typing it on a phone keyboard is
-awful. On startup the proxy writes QR codes for it, so you can scan rather
-than type.
-
-Set the URL the phone should use in `proxy/.env` — the proxy has no way to
-know its own externally-reachable address, so if this is unset it writes
-the token code only:
-
-```
-PROXY_PUBLIC_URL=https://kia-proxy.example.com
-```
-
-Restart the proxy. Two images appear in `proxy/setup/`:
-
-```
-proxy/setup/bearer-token.png    the value for the Bearer token field
-proxy/setup/proxy-url.png       the value for the Base URL field
-```
-
-Open them on the machine running the proxy (`xdg-open proxy/setup/bearer-token.png`),
-scan with the phone's ordinary camera app, and paste the recognised text
-into the matching field in the watchapp's settings. The camera app copies
-the decoded string to the clipboard; there is no scanning built into the
-settings page itself, because Pebble serves the Clay config page as a
-`data:` URI, which is not a secure context and so cannot open a camera.
-
-Running in Docker on a headless box? The token QR can also go to the
-startup log, which is then the only channel you need. It is off by
-default, because a QR block in a log *is* the token in machine-readable
-form, and logs outlive token rotation, get shipped off the host by
-collectors, and end up pasted into issues. Turn it on deliberately:
-
-```
-SETUP_QR_LOG=1
-```
-
-```sh
-sudo docker compose logs proxy | head -40
-```
-
-Rotate the token if a log carrying it has gone anywhere you don't control.
-
-`proxy/setup/` is gitignored and written owner-only, because those images
-are a live credential in scannable form — treat them exactly like the
-`.env` they came from. Anyone who photographs your screen has your token.
-They are never served over HTTP.
-
+`pebble install --emulator emery` (or `basalt` / `diorite` / `chalk`)
+reinstalls any time you rebuild. See [Demo mode](#demo-mode) for the
+full emulator flow.
 
 ### 3. Configure from the phone
 
@@ -400,7 +337,8 @@ There is no CLI route to the settings page on real hardware —
 2. Phone app → Apps → **Kia** → **Settings**. The gear appears because
    `package.json` declares `capabilities: ["configurable"]`, and is
    enabled only while a compatible watch is connected.
-3. Clay opens in a WebView. Fill in:
+3. Clay opens in a WebView. Scan the QR codes from step 1 with the
+   phone's camera app rather than typing, and fill in:
    - **Base URL**: the public HTTPS URL Caddy serves, e.g.
      `https://kia-proxy.example.com`.
    - **Bearer token**: `PROXY_BEARER_TOKEN` from the `proxy/.env` **on
@@ -416,10 +354,12 @@ die against the handset's own loopback. A LAN address like
 moment you leave, so prefer the Let's Encrypt hostname. A self-signed
 certificate will fail opaquely inside the WebView.
 
-Then verify:
+### 4. Verify
 
 1. Launch Kia on the watch. It should show vehicle data rather than `ERR`
-   in the top-right.
+   in the top-right. Launch always pulls the newest state Kia's servers
+   hold (the first status request sends `fresh=1`), so the numbers
+   should match the official app.
 2. Tail logs over whichever transport you installed with —
    `pebble logs --adb`, `--phone <ip>`, or `--cloudpebble`. Both the
    watch's `APP_LOG` output and the companion's `[kia] req …` lines come
@@ -431,33 +371,132 @@ Then verify:
 
 ## Controls
 
-- **Up / Down** — switch between vehicles returned by the proxy. If the
-  newly-selected vehicle has no cached status yet, the watch asks the
-  companion to fetch it.
+Opening the app always pulls the latest state Kia's servers hold: the
+companion's first status request each session sends `fresh=1`, which
+tells the proxy to skip its `LIVE_REFRESH_MIN_SECONDS` cache window for
+that one ordinary read. Launch never wakes the car — only a force
+refresh does that.
+
+### Touch (Pebble Time 2 / emery)
+
+The Pebble Time 2 is the only target with a touchscreen.
+
+- **Drag down** (either screen) — force refresh: wakes the car, same as
+  long-press Select, and subject to the same `LIVE_FORCE_MIN_SECONDS`
+  downgrade window.
+- **Swipe left** (main screen) — open the detail screen.
+- **Swipe right** (detail screen) — back to the main screen.
+- **Swipe right** (main screen) — quit the app.
+
+### Buttons (all platforms)
+
+The only controls on basalt, diorite and chalk.
+
+- **Up / Down** — switch vehicle. Only does anything when the account
+  has more than one vehicle; with a single car it no longer triggers a
+  phantom refresh and spinner.
 - **Select** — open the detail screen (odometer, outside temp, doors,
   charge rate, ETA).
-- **Select (long press, ≥500ms)** — force refresh the current vehicle
-  (POSTs `/vehicles/{id}/refresh`, short vibration, `ERR` top-right if
-  the phone link or proxy is down).
+- **Select (long press, ≥500ms)** — force refresh the current vehicle,
+  with a short vibration.
 - **Back** — return to the main screen or exit the app.
 
-While a request is in flight the watch shows `...` top-right. Errors
-surface in the bottom status line so the user can read what went wrong
-without digging into logs. Nothing is rendered from compiled state — if
-the companion never responds, the watch sits on a "Connecting…" screen.
+While a request is in flight the watch shows a small spinner top-right.
+Errors surface in the bottom status line so the user can read what went
+wrong without digging into logs. On a first-ever launch with no
+companion the watch sits on a "Connecting…" screen; after any
+successful session it restores the last-known state from watch storage
+instantly, with the age line showing how old those numbers are.
 
 ## Display units
 
 UK defaults: range and odometer render in miles, outside temp in Celsius,
 charge rate in kW. Data is transported and cached in km end-to-end; the
-watch converts on the fly. Flip `PBK_USE_MILES` in `pebble/src/c/units.h`
-to `0` and rebuild if you want kilometres. A runtime toggle via Clay
-configuration is deferred until later (see DESIGN.md).
+watch converts on the fly. Switch between miles and km with the toggle
+in the watchapp's settings page on the phone — no rebuild needed.
+`PBK_USE_MILES_DEFAULT` in `pebble/src/c/units.h` only decides what a
+fresh install shows before that toggle has been seen once.
+
+## Demo mode
+
+Everything runs on one machine against bundled sample data — no Kia
+account, no phone, no physical watch. Useful for iterating on the
+watchapp UI or exercising the proxy.
+
+**One-off setup** — install the Pebble SDK and `uv`. See
+https://developer.repebble.com/sdk/ for platforms not listed here.
+
+```sh
+# Fedora
+sudo dnf install -y nodejs dtc SDL-devel SDL2 pixman glib2 uv
+# Arch
+sudo pacman -S --needed nodejs npm sdl2-compat glib2 pixman zlib libpng sndio uv
+
+uv tool install pebble-tool --python 3.13   # 3.14 is not supported yet
+pebble sdk install latest
+```
+
+Verified with pebble-tool 5.0.40 and SDK 4.33.1.
+
+**Run it**:
+
+```sh
+# terminal 1 — start the proxy (demo is the default data source)
+cd proxy
+echo 'PROXY_BEARER_TOKEN=dev-token-change-me' > .env
+uv sync
+uv run uvicorn app.main:app --port 8000
+
+# terminal 2 — build and install the watchapp
+cd pebble
+npm install              # one-off: pulls pebble-clay
+pebble build
+pebble install --emulator emery      # or basalt / diorite / chalk
+
+# open the Clay config in your browser, fill in:
+#   Base URL     http://localhost:8000
+#   Bearer token dev-token-change-me   (matches what you set in proxy/.env)
+# click Save — values persist in the emulator's localStorage.
+pebble emu-app-config
+
+# First launch will have already failed with "Open Settings to configure
+# proxy"; long-press Select on the emulator (or re-install) to retry now
+# that config is saved.
+pebble logs --emulator emery         # tail APP_LOG + companion output
+```
+
+**Edit the data** — `proxy/demo-data.json` is the static payload the
+`demo` source re-reads on every fetch, so edits show up on the next
+refresh. `updated_at` accepts `"-2m"`-style relative offsets so a
+hand-edited file stays fresh no matter when it was last saved.
+
+**Exercise a scenario** (time-evolving demo):
+
+```sh
+# stop the static proxy, then re-run pointing at a scenario
+DEMO_DATA_FILE=scenarios/pv5-rapid-charge.json uv run uvicorn app.main:app --port 8000
+
+# watch proxy-side push detection fire (no phone app needed — pushes
+# go to a NullNotifier when NTFY_TOPIC is unset, just logged)
+#   [INFO] notifier: would notify: PV5: Plugged in — DC
+#   [INFO] notifier: would notify: PV5: Charging — 180.0 kW • ETA 28 min
+```
+
+Pointing at real ntfy is the same command plus `NTFY_URL` and
+`NTFY_TOPIC`. See `proxy/README.md` → "Notifications".
+
+Touch gestures can be exercised in the emery emulator too: from
+`pebble/`, start it with `pebble install --emulator emery --vnc` and
+drive the touchscreen with `python3 tools/vnc_touch.py` (swipe and drag
+recipes in the script header). Pass `--vnc` to every later pebble
+command in that session — a command without it respawns the emulator
+without VNC and kills the running app. Buttons cover everything else —
+see [Controls](#controls).
 
 ## Updating
 
 **Watchapp** — `cd pebble && pebble build && pebble install --phone <IP>`
-(or `--emulator basalt`). The Clay config persists across installs.
+(or `--emulator emery`). The Clay config persists across installs.
 
 **Proxy** — on the home server, pull the new code and restart:
 
@@ -490,12 +529,17 @@ Clients re-fetch on the next request; no watch-side restart needed.
   quotes are literal to both compose and pydantic-settings. If the
   credentials work everywhere and still fail, Kia has probably changed
   its login flow — try `uv sync --upgrade-package hyundai-kia-connect-api`.
-- **Watch shows `Kia rate limited`** — too many calls against the
-  account. Back off; the intervals in `.env` exist to prevent this.
-- **A long-press refresh seems to do nothing** — check `forced` in the
-  response. `false` means you were inside `LIVE_FORCE_MIN_SECONDS` and
-  got cached data on purpose, which is the intended behaviour rather
-  than a fault.
+- **Watch shows `Kia is rate limiting this account`** — too many calls
+  against the account. Back off; the intervals in `.env` exist to
+  prevent this.
+- **A force refresh (long-press or drag-down) seems to do nothing** —
+  check `forced` in the response. `false` means you were inside
+  `LIVE_FORCE_MIN_SECONDS` and got cached data on purpose, which is the
+  intended behaviour rather than a fault.
+- **Data looks stale right after launch** — launch already skips the
+  proxy's cache window (`fresh=1`), so what you see is the newest state
+  Kia's servers hold. A parked car reports infrequently; drag down or
+  long-press Select to wake it for a truly current reading.
 - **A field reads wrong or empty on the watch** — run
   `uv run python tools/dump_vehicle.py` in `proxy/` and compare the
   real payload against the mapping in `app/sources/live.py`. The dump
@@ -528,8 +572,10 @@ The phased plan lives in `DESIGN.md`. Short version:
 5. UX polish — last-known state persisted to watch storage, 12V
    battery readout, staleness visible alongside errors, vibrate on the
    OK→error edge ← **done**
+6. Touch controls on emery, always-fresh launch reads, launcher icon
+   and store-listing prep ← **done**
 
-All planned phases are complete.
+All six planned phases are complete.
 
 ## For forkers
 

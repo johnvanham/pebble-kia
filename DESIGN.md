@@ -1,6 +1,6 @@
 # Pebble Kia Watch App — Design
 
-Status: phases 1-3 built. Live Kia data flows watch -> companion ->
+Status: all six phases built. Live Kia data flows watch -> companion ->
 proxy -> Kia Connect.
 
 Goal: view live stats for a Kia PV5 Passenger (and future vehicles on the same
@@ -105,11 +105,16 @@ informed choice to strip the proxy out.
 
 ### Proxy (`proxy/`)
 
-- Python 3.12, FastAPI, `hyundai_kia_connect_api` as a dependency.
+- Python 3.13, FastAPI, `hyundai_kia_connect_api` as a dependency.
 - Endpoints:
   - `GET /vehicles` — list vehicles on the account (id, VIN, nickname, model).
-  - `GET /vehicles/{id}/status` — cached state; `?force=1` wakes the
-    vehicle (rate-limited, default ≥ 15 minutes between wakes).
+  - `GET /vehicles/{id}/status` — cached state. `?fresh=1` skips the
+    freshness window (`LIVE_REFRESH_MIN_SECONDS`) for one ordinary
+    read — the state Kia's servers already hold, never a wake; the
+    companion sends it on its first status request each session so
+    launch always shows current data. `?force=1` wakes the vehicle
+    (rate-limited, default ≥ 15 minutes between wakes). When both are
+    sent, force wins.
   - `POST /vehicles/{id}/refresh` — explicit refresh, same rate limit.
 - Auth: single shared bearer token in an env var; the companion sends it on
   every call. No per-user login — this is a single-user system.
@@ -154,7 +159,9 @@ matters for the 12V battery:
 - An ordinary read asks Kia for the state the vehicle last reported.
   It costs an API call and nothing else — the car stays asleep. This is
   what the watch's 15s poll and the detector both do, and
-  `LIVE_REFRESH_MIN_SECONDS` bounds how often it reaches Kia.
+  `LIVE_REFRESH_MIN_SECONDS` bounds how often it reaches Kia. The
+  launch-time `fresh=1` read is still an ordinary read — it skips that
+  freshness window for one call and leaves the force floor untouched.
 - A forced read (`?force=1`, `POST /refresh`, the watch's long-press)
   wakes the telematics unit for genuinely current data. That draws on
   the 12V battery, so it has its own harder floor,
@@ -227,13 +234,24 @@ Deliberate scope limits:
 
 - Written in C against the Pebble SDK (Core Devices 4.33.1).
 - Screens:
-  - **Main** — big SoC percentage, range, plug status, odometer, last-updated
-    timestamp.
+  - **Main** — big SoC percentage with a charging/idle bolt beside it
+    (filled while charging, outline while idle, so the state survives
+    the 1-bit platforms), battery bar, range, plug and lock status,
+    last-updated timestamp.
   - **Detail** — door/lock state, outside temp, 12V SoC, charge rate (kW) if
     charging, estimated charge-complete time.
-  - **Vehicle picker** — only shown when the account has >1 vehicle.
-- Controls: Select = refresh now, Up/Down = switch vehicle (if applicable),
-  Back = exit.
+- Controls, buttons (all platforms, and the only controls on basalt,
+  diorite and chalk): Select = open detail, long-press Select (≥500ms)
+  = force refresh with a short vibe, Up/Down = switch vehicle (a no-op
+  unless the account has more than one), Back = return/exit.
+- Controls, touch (emery only — the Pebble Time 2 is the only target
+  with a touchscreen; recognizers are attached per window): drag down
+  on either screen = force refresh, swipe left on main = open detail,
+  swipe right on detail = back to main, swipe right on main = quit.
+  Touch delivery is opt-in: `app_touch_navigation_enable(true)` at app
+  init is required before a third-party app receives any touch input,
+  and each window disables the system touch bridge so gestures reach
+  the app's own recognizers instead of the built-in button emulation.
 - Persistent storage: last known state per vehicle, so the watch shows data
   instantly before the first fetch completes.
 
@@ -272,6 +290,7 @@ Companion → watch (responses):
 | `AUX_BATTERY_PCT`| uint8  | 12V auxiliary battery, 0–100; 0 means not reported   |
 | `IS_CLIMATE_ON` | bool    | Maps to `air_control_is_on` upstream                 |
 | `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
+| `UNIT_MILES`    | bool    | Clay units toggle; rides every list/status response  |
 | `ERROR_MSG`     | string  | Populated on failure; watch surfaces it in the UI    |
 
 Startup race: the companion emits `RESP_KIND=ready` when it comes
@@ -291,14 +310,15 @@ UK deployment: the watch renders range and odometer in miles by default,
 Celsius for outside temp, kW for charge rate. The owner drives in the UK and
 Kia's head unit shows miles, so the watch matches.
 
-Implementation: `pebble/src/c/units.h` defines `PBK_USE_MILES` (default 1)
-and a `format_distance_km()` helper. All km-to-display conversion flows
-through that helper; flipping the macro to 0 switches every distance
-readout back to km without touching call sites. Both Pebble platforms are
-fixed-point, so the helper uses integer math (km × 1000 / 1609, rounded)
-rather than floats. When the configuration UI lands in phase 5 this macro
-can become a Clay setting persisted to `localStorage`; for now it's a
-compile-time constant because the deployment is single-user.
+Implementation: the miles/km choice is a Clay toggle on the settings
+page (`UNIT_MILES`), sent by the companion with every list and status
+response, applied at runtime and persisted alongside the vehicle data so
+an offline launch restores it. `pebble/src/c/units.h` defines
+`PBK_USE_MILES_DEFAULT` (1 — UK deployment), which only decides what a
+fresh install shows before the toggle has been seen once, plus the
+`format_distance_km()` helper every distance readout flows through.
+The watch is fixed-point, so the helper uses integer math
+(km × 1000 / 1609, rounded) rather than floats.
 
 ### Cabin temperature is not available
 
@@ -354,7 +374,21 @@ server); the list below reflects the path actually taken.
    provide; a list window for an account with one car would be dead
    code. Revisit if a second vehicle ever lands on the account.
 
-All planned phases are complete.
+6. **Touch controls, launch freshness, and packaging polish.** Touch
+   gestures on the Pebble Time 2, the only target with a touchscreen:
+   drag down on either screen force-refreshes, swipe left on main opens
+   the detail screen, swipe right on detail returns, swipe right on
+   main quits. Buttons keep working everywhere and remain the only
+   controls on basalt, diorite and chalk; Up/Down became a no-op with a
+   single vehicle instead of a phantom refresh. Launch always shows the
+   newest state Kia's servers hold — the companion's first status
+   request each session sends `fresh=1`, an ordinary read that skips
+   the proxy's freshness window without waking the car. A Kia-mark menu
+   icon shows in the watch launcher and phone locker, and
+   `pebble/appstore.md` drafts a future store listing, since sideloaded
+   apps cannot ship a description to the phone. **Done.**
+
+All six planned phases are complete.
 
 ## Risks and open questions
 
@@ -397,15 +431,18 @@ proxy/            # FastAPI service + Dockerfile
 pebble/           # Pebble watchapp
   src/c/          # watchapp C source
   src/pkjs/       # PebbleKit JS companion
+  resources/      # menu icon (watch launcher + phone locker)
+  tools/          # icon generator, emulator touch injector
+  appstore.md     # draft store listing for a future submission
   package.json    # pebble project manifest
   wscript
 DESIGN.md         # this file
 README.md         # quickstart
 ```
 
-There is no `resources/` — the watchapp draws everything with system
-fonts and graphics primitives, which is what keeps it comfortable on the
-smaller platforms.
+The only bundled resource is the menu icon — the UI itself draws
+everything with system fonts and graphics primitives, which is what
+keeps it comfortable on the smaller platforms.
 
 ## Building and running
 

@@ -16,15 +16,18 @@ deliberate — don't re-litigate it without being asked.
 
 ## Current phase
 
-Phase 3 done: the `live` source talks to the owner's real Kia account
-via `hyundai_kia_connect_api`, with SQLite persistence for the refresh
-token and last-known state. `DATA_SOURCE=live` in `proxy/.env` switches
-it on; `demo` remains for offline iteration and still drives the
-scenario replayer.
+All six phases done: the `live` source talks to the owner's real Kia
+account via `hyundai_kia_connect_api`, with SQLite persistence for the
+refresh token and last-known state. `DATA_SOURCE=live` in `proxy/.env`
+switches it on; `demo` remains for offline iteration and still drives
+the scenario replayer. Phase 6 added touch controls on emery, an
+always-fresh launch read (`fresh=1`) and the launcher menu icon
+(`pebble/resources/`).
 
 The owner's watch is now a **Pebble Time 2 (`emery`)**, which has a
-larger display than the Pebble Time the UI was originally laid out for.
-Emery is the primary target; basalt, diorite and chalk still build.
+larger display than the Pebble Time the UI was originally laid out for,
+plus a touchscreen — the only target with one. Emery is the primary
+target; basalt, diorite and chalk still build.
 
 Status table at the top of `README.md` reflects current state; update it
 as phases land.
@@ -76,6 +79,10 @@ Guardrails:
   `force=1` cannot bypass — a force inside the window is downgraded to
   a cached read with `forced: false`, never an error. Do not add a code
   path that forces on a timer.
+- `fresh=1` on GET status bypasses `LIVE_REFRESH_MIN_SECONDS` for one
+  ordinary read — the companion sends it on launch. It applies to
+  ordinary reads only; never let it touch the forced path or
+  `LIVE_FORCE_MIN_SECONDS`.
 - The transition detector goes through `StatusCache`, not the source
   directly, so one detector interval is one upstream call shared with
   whatever the watch is polling. Keep it that way.
@@ -158,6 +165,37 @@ command itself works; only the usage-printing path is broken. Pass a
 valid `action` plus at least one button and it's fine. Valid actions are
 `click`, `push` (hold), `release`.
 
+Emery's touch gestures (drag down, swipes) CAN be exercised headlessly,
+but not via `pebble emu-button` — the path is the emulator's VNC server:
+
+```sh
+# from pebble/, like every other pebble command in this file
+pebble install --emulator emery --vnc
+python3 tools/vnc_touch.py 165 110 35 110 90    # swipe left
+python3 tools/vnc_touch.py 100 50 100 170 300   # drag down
+```
+
+Gotchas that cost real debugging time, do not rediscover them:
+
+- **Every pebble command in a `--vnc` session must also pass `--vnc`**
+  (`logs`, `screenshot`, `emu-button`, …). The emulator manager kills
+  and respawns QEMU whenever the flag disagrees with the running
+  instance, which silently quits the app under test.
+- The QEMU monitor's `mouse_move` is useless here: it emits relative
+  events and the `pebble-touch` device only accepts absolute + button,
+  so buttons arrive and positions never do. VNC pointer events are the
+  working injection path, and only after a `SetEncodings` message —
+  QEMU flips a client to absolute-pointer mode when it negotiates
+  encodings, which `tools/vnc_touch.py` handles.
+- `pebble logs` holds one pypkjs websocket; a later `pebble install`
+  kicks it off. Attach logs after installing.
+- pypkjs keeps one JS session for the emulator's lifetime, so
+  companion state that is per-launch on real hardware (the `fresh=1`
+  launch flag, `currentVehicleId`) survives reinstalls in the emulator.
+  `pebble kill` is the only way to reset it. Every running emulator's
+  companion keeps polling the proxy, so kill the others before reading
+  request logs.
+
 ## Working on the watchapp
 
 The SDK is installed (see above), so **build before claiming anything
@@ -181,6 +219,16 @@ it actually looks like. Known gotchas:
   hard-coding pixel constants; that is what keeps all four working.
 - `app_state_subscribe` dedupes by function pointer, so it's safe to
   call on each window load.
+- Touch is a three-part contract, and all three parts are load-bearing:
+  `app_touch_navigation_enable(true)` once at init (third-party apps
+  receive NO touch input at all without it — recognizers just sit
+  silent), `window_set_touch_bridge_disabled(window, true)` per window
+  (else the system set consumes gestures first), and recognizers
+  attached in `window_load` (the window owns and destroys them on
+  unload, so re-attaching each load is correct). The recognizer API is
+  real only on emery; the other platforms stub it as `(0)` no-op macros
+  that don't compile against struct-returning calls, hence the
+  `#if PBL_API_EXISTS(window_attach_recognizer)` guards.
 - Real Kia vehicle ids are 36-char UUIDs. `VEHICLE_ID_LEN` must stay
   large enough for one; the demo source's short ids (`pv5-demo`) hid a
   truncation bug that only appeared against the live account.
@@ -215,10 +263,11 @@ it actually looks like. Known gotchas:
 The owner is in the UK, so range and odometer render in **miles** by
 default; outside temp in °C, charge rate in kW. The canonical data stays in
 km (matching what the Kia API returns) and conversion happens only at
-render time — see `pebble/src/c/units.h` (`PBK_USE_MILES` macro and
-`format_distance_km()` helper). When adding a new distance readout, route
-it through that helper rather than hard-coding "km". `DESIGN.md` →
-"Display units" has the longer rationale.
+render time. The miles/km choice is a runtime Clay toggle (`UNIT_MILES`);
+`PBK_USE_MILES_DEFAULT` in `pebble/src/c/units.h` only seeds a fresh
+install before that toggle has been seen. When adding a new distance
+readout, route it through `format_distance_km()` rather than hard-coding
+"km". `DESIGN.md` → "Display units" has the longer rationale.
 
 ## Style conventions already in play
 
