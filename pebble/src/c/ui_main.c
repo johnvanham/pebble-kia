@@ -40,23 +40,6 @@ static void spinner_tick(void *ctx) {
   if (app_state_is_busy() && !app_state_error()) spinner_start();
 }
 
-static void format_ago(time_t when, char *out, size_t out_len) {
-  if (when == 0) {
-    snprintf(out, out_len, "--");
-    return;
-  }
-  time_t now = time(NULL);
-  int secs = (int)(now - when);
-  if (secs < 0) secs = 0;
-  if (secs < 60) {
-    snprintf(out, out_len, "%ds ago", secs);
-  } else if (secs < 3600) {
-    snprintf(out, out_len, "%dm ago", secs / 60);
-  } else {
-    snprintf(out, out_len, "%dh ago", secs / 3600);
-  }
-}
-
 static const char *plug_label(PlugState p) {
   switch (p) {
     case PLUG_AC: return "AC";
@@ -188,10 +171,13 @@ static void canvas_update(Layer *layer, GContext *ctx) {
     return;
   }
 
-  // The number/bar/range block is centred in whatever is left between
-  // the name and the status row, so the taller emery screen spreads the
-  // readout out instead of leaving a gap at the bottom.
-  int16_t status_y = b.origin.y + b.size.h - LAYOUT_PAD_V - LAYOUT_H_STATUS;
+  // An error gets its own line under the status row rather than taking
+  // the row over: the numbers above are exactly as old as the failure
+  // makes them, so the age is the one thing that must not disappear
+  // when the fetch stops working. The readout block below is centred in
+  // whatever is left, so it gives up the height rather than colliding.
+  int16_t status_h = error ? 2 * LAYOUT_H_STATUS : LAYOUT_H_STATUS;
+  int16_t status_y = b.origin.y + b.size.h - LAYOUT_PAD_V - status_h;
   int16_t block_top = top + LAYOUT_H_TITLE;
   int16_t block_h = LAYOUT_H_SOC + LAYOUT_GAP + LAYOUT_H_BAR + LAYOUT_GAP +
                     LAYOUT_H_VALUE;
@@ -231,26 +217,28 @@ static void canvas_update(Layer *layer, GContext *ctx) {
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
 
-  // --- Status row (bottom). Error text replaces the normal line so the
-  // user can actually read what went wrong without digging through logs.
+  // --- Status row (bottom), plus the error under it when there is one.
   GFont status_font = fonts_get_system_font(LAYOUT_FONT_STATUS);
-  char status_buf[APP_ERROR_LEN];
-  if (error) {
-#ifdef PBL_COLOR
-    graphics_context_set_text_color(ctx, GColorFolly);
-#endif
-    strncpy(status_buf, error, sizeof(status_buf) - 1);
-    status_buf[sizeof(status_buf) - 1] = 0;
-  } else {
-    char ago_buf[16];
-    format_ago(v->updated_at, ago_buf, sizeof(ago_buf));
-    snprintf(status_buf, sizeof(status_buf), "%s  %s  %s", plug_label(v->plug),
-             v->doors_locked ? "LOCK" : "OPEN", ago_buf);
-  }
+  char ago_buf[16];
+  format_age(v->updated_at, ago_buf, sizeof(ago_buf));
+  char status_buf[32];
+  snprintf(status_buf, sizeof(status_buf), "%s  %s  %s", plug_label(v->plug),
+           v->doors_locked ? "LOCK" : "OPEN", ago_buf);
   graphics_draw_text(ctx, status_buf, status_font,
                      layout_row(b, status_y, LAYOUT_H_STATUS),
                      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
                      NULL);
+  if (error) {
+#ifdef PBL_COLOR
+    graphics_context_set_text_color(ctx, GColorFolly);
+#endif
+    graphics_draw_text(ctx, error, status_font,
+                       layout_row(b, status_y + LAYOUT_H_STATUS,
+                                  LAYOUT_H_STATUS),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter,
+                       NULL);
+    graphics_context_set_text_color(ctx, GColorWhite);
+  }
 }
 
 static void on_state_changed(void) {
@@ -259,25 +247,14 @@ static void on_state_changed(void) {
   else spinner_stop();
 }
 
-// Fires once a minute so the "Xm ago" text stays fresh between data
-// updates. Cheap — one mark_dirty per minute.
-static void minute_tick(struct tm *t, TimeUnits units) {
-  if (s_canvas) layer_mark_dirty(s_canvas);
-}
-
-static void maybe_request_current_status(void) {
-  const Vehicle *v = app_state_current_vehicle();
-  if (v && !v->have_status) ipc_request_status(v->id, false);
-}
-
 static void up_click(ClickRecognizerRef ref, void *ctx) {
   app_state_prev_vehicle();
-  maybe_request_current_status();
+  ipc_request_current_status();
 }
 
 static void down_click(ClickRecognizerRef ref, void *ctx) {
   app_state_next_vehicle();
-  maybe_request_current_status();
+  ipc_request_current_status();
 }
 
 static void select_click(ClickRecognizerRef ref, void *ctx) {
@@ -309,11 +286,9 @@ static void window_load(Window *window) {
   layer_add_child(root, s_canvas);
 
   app_state_subscribe(on_state_changed);
-  tick_timer_service_subscribe(MINUTE_UNIT, minute_tick);
 }
 
 static void window_unload(Window *window) {
-  tick_timer_service_unsubscribe();
   spinner_stop();
   if (s_canvas) {
     layer_destroy(s_canvas);

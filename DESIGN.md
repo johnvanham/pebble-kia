@@ -225,7 +225,7 @@ Deliberate scope limits:
 
 ### Watchapp (`pebble/src/c/`)
 
-- Written in C against the Pebble SDK (Rebble 4.9.x).
+- Written in C against the Pebble SDK (Core Devices 4.33.1).
 - Screens:
   - **Main** — big SoC percentage, range, plug status, odometer, last-updated
     timestamp.
@@ -267,8 +267,9 @@ Companion → watch (responses):
 | `CHARGE_ETA_MIN`| uint16  | Minutes to target SoC                                |
 | `PLUG`          | uint8   | 0=unplugged, 1=AC, 2=DC                              |
 | `DOORS_LOCKED`  | bool    |                                                      |
-| `CABIN_TEMP_C`  | int8    |                                                      |
+| `OUTSIDE_TEMP_C`| int8    | Ambient; the PV5 reports no cabin reading            |
 | `ODO_KM`        | uint32  |                                                      |
+| `AUX_BATTERY_PCT`| uint8  | 12V auxiliary battery, 0–100; 0 means not reported   |
 | `IS_CLIMATE_ON` | bool    | Maps to `air_control_is_on` upstream                 |
 | `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
 | `ERROR_MSG`     | string  | Populated on failure; watch surfaces it in the UI    |
@@ -337,10 +338,23 @@ server); the list below reflects the path actually taken.
    the Pebble Time the UI was laid out for, so geometry is derived from
    runtime layer bounds instead of basalt-sized pixel constants. Emery
    is the platform the design is tuned for; basalt, diorite and chalk
-   still build.
-5. **Detail + picker screens polish, configuration UX improvements**
-   (status-line error detail, last-update indicator, persist last-known
-   state on the watch for instant boot).
+   still build. Verified by building all four platforms against the real
+   proxy and screenshotting each. **Done.**
+5. **Reliability and UX polish.** Last-known state per vehicle persisted
+   to watch storage, so launch paints real numbers instead of
+   "Connecting…". A 12V auxiliary-battery readout on the detail screen —
+   the one number that shows whether the force-refresh floor is actually
+   protecting the battery. Staleness stays visible alongside errors
+   rather than being replaced by them, on both screens. A single short
+   vibration on the OK→error edge, never repeated while the error
+   persists. **Done.**
+
+   Not built: a separate vehicle-picker screen. Up/Down already cycles
+   vehicles on both screens, which is the same affordance a picker would
+   provide; a list window for an account with one car would be dead
+   code. Revisit if a second vehicle ever lands on the account.
+
+All planned phases are complete.
 
 ## Risks and open questions
 

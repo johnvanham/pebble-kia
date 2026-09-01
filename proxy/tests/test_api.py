@@ -58,7 +58,8 @@ def test_status_returns_a_full_payload(client):
     body = r.json()
     assert body["id"] == "pv5-demo"
     for field in ("soc_pct", "range_km", "is_charging", "plug",
-                  "doors_locked", "outside_temp_c", "odo_km", "updated_at"):
+                  "doors_locked", "outside_temp_c", "odo_km",
+                  "aux_battery_pct", "updated_at"):
         assert field in body["status"]
 
 

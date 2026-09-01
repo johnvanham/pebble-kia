@@ -12,7 +12,7 @@ as a hosted service.
 
 | Component              | Status                                                     |
 | ---------------------- | ---------------------------------------------------------- |
-| Pebble watchapp (C)    | Fetches vehicle list + status; spinner, live-ticking ago   |
+| Pebble watchapp (C)    | Laid out for emery; last-known state persisted for instant boot |
 | PebbleKit JS companion | Clay config page (proxy URL, token, miles/km toggle)       |
 | Self-hosted proxy      | FastAPI, `demo` + `live` sources, cache + rate limit       |
 | Scenario engine        | Time-evolving demos under `proxy/scenarios/`               |
@@ -393,8 +393,11 @@ The phased plan lives in `DESIGN.md`. Short version:
    rate limits, PV5 field mappings confirmed against a real dump
    ← **done**
 4. Watchapp laid out for the Pebble Time 2 (`emery`) ← **done**
-5. UX polish (richer status line, persist last-known state on the
-   watch for instant boot)
+5. UX polish — last-known state persisted to watch storage, 12V
+   battery readout, staleness visible alongside errors, vibrate on the
+   OK→error edge ← **done**
+
+All planned phases are complete.
 
 ## For forkers
 

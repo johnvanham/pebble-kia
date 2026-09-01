@@ -43,7 +43,8 @@
       "IS_CLIMATE_ON",
       "UPDATED_AT",
       "UNIT_MILES",
-      "ERROR_MSG"
+      "ERROR_MSG",
+      "AUX_BATTERY_PCT"
     ],
     "resources": {
       "media": []

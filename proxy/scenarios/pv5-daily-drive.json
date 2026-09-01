@@ -21,6 +21,7 @@
           "doors_locked": true,
           "outside_temp_c": 14,
           "odo_km": 3421,
+          "aux_battery_pct": 86,
           "is_climate_on": false
         },
         "events": [

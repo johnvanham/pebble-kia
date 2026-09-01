@@ -30,6 +30,7 @@ typedef struct {
   int8_t outside_temp_c;
   uint32_t odo_km;
   bool is_climate_on;
+  uint8_t aux_battery_pct;
   time_t updated_at;
 } Vehicle;
 
@@ -44,11 +45,15 @@ typedef struct {
   int8_t outside_temp_c;
   uint32_t odo_km;
   bool is_climate_on;
+  uint8_t aux_battery_pct;
   time_t updated_at;
 } VehicleStatus;
 
 typedef enum {
   APP_PHASE_LOADING_LIST,
+  // Vehicles came back from flash, so the screen paints immediately, but
+  // this session has not heard from the companion yet.
+  APP_PHASE_RESTORED,
   APP_PHASE_READY,
 } AppPhase;
 

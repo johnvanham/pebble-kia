@@ -118,6 +118,11 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
         # unlocked car; the reverse only costs a needless check.
         locked = False
 
+    aux = vehicle.car_battery_percentage
+    if aux is None:
+        _missing("car_battery_percentage")
+        aux = 0
+
     climate = vehicle.air_control_is_on
     if climate is None:
         _missing("air_control_is_on")
@@ -152,6 +157,7 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
             "outside_temperature",
         ),
         odo_km=_to_km(vehicle.odometer, vehicle.odometer_unit, "odometer"),
+        aux_battery_pct=min(100, max(0, round(aux))),
         is_climate_on=bool(climate),
         updated_at=updated_at,
     )

@@ -109,6 +109,7 @@ function statusMessage(vehicleId, data) {
     OUTSIDE_TEMP_C: s.outside_temp_c | 0,
     ODO_KM: s.odo_km | 0,
     IS_CLIMATE_ON: s.is_climate_on ? 1 : 0,
+    AUX_BATTERY_PCT: s.aux_battery_pct | 0,
     UPDATED_AT: parseIsoSeconds(s.updated_at),
     UNIT_MILES: getConfig().unitMiles ? 1 : 0
   };

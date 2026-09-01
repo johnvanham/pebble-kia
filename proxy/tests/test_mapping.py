@@ -22,6 +22,7 @@ class StubVehicle:
     _outside_temperature_unit = None
     odometer = None
     odometer_unit = None
+    car_battery_percentage = None
     air_control_is_on = None
     last_updated_at = None
     last_scanned_at = None
@@ -48,6 +49,7 @@ def metric_charging(**overrides) -> StubVehicle:
         _outside_temperature_unit="°C",
         odometer=1234.5,
         odometer_unit="km",
+        car_battery_percentage=83,
         air_control_is_on=False,
         last_updated_at=UPDATED,
     )
@@ -67,6 +69,7 @@ def test_nominal_charging():
     assert status.doors_locked is True
     assert status.outside_temp_c == 21
     assert status.odo_km == 1234
+    assert status.aux_battery_pct == 83
     assert status.is_climate_on is False
     assert status.updated_at == UPDATED
 
@@ -114,7 +117,17 @@ def test_sleeping_car_still_renders():
     assert status.plug == "unplugged"
     assert status.doors_locked is False
     assert status.odo_km == 0
+    assert status.aux_battery_pct == 0
     assert status.updated_at is not None
+
+
+def test_aux_battery_absent_on_an_otherwise_reporting_car():
+    # Absent reads as 0 rather than being dropped: the wire model carries no
+    # "unknown", by the same rule every other field here follows.
+    status = map_status(metric_charging(car_battery_percentage=None))
+
+    assert status.aux_battery_pct == 0
+    assert status.soc_pct == 62
 
 
 def test_falls_back_to_scan_time_when_car_reports_no_timestamp():

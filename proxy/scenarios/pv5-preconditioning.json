@@ -21,6 +21,7 @@
           "doors_locked": true,
           "outside_temp_c": -2,
           "odo_km": 3421,
+          "aux_battery_pct": 85,
           "is_climate_on": false
         },
         "events": [
@@ -31,7 +32,7 @@
           { "at_s": 360, "name": "unplug",        "patch": { "plug": "unplugged" } },
           { "at_s": 390, "name": "unlock",        "patch": { "doors_locked": false } },
           { "at_s": 450, "name": "drive_start",   "patch": { "soc_pct": 76, "range_km": 300, "odo_km": 3425 } },
-          { "at_s": 510, "name": "climate_end",   "patch": { "is_climate_on": false } }
+          { "at_s": 510, "name": "climate_end",   "patch": { "is_climate_on": false, "aux_battery_pct": 84 } }
         ]
       }
     }

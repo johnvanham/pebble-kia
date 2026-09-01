@@ -37,6 +37,24 @@ void ipc_request_status(const char *id, bool force) {
   send_request(force ? "refresh" : "status", id);
 }
 
+// The outbox carries one message at a time, so a vehicle picked while a
+// request is in flight can't be asked for yet. Dropping the ask would
+// strand it: the companion only ever polls the vehicle it last heard
+// about, so nothing would come back for this one until the user
+// happened to press again. Remember it and send when the link frees up.
+static bool s_status_deferred = false;
+
+void ipc_request_current_status(void) {
+  const Vehicle *v = app_state_current_vehicle();
+  if (!v) return;
+  if (app_state_is_busy()) {
+    s_status_deferred = true;
+    return;
+  }
+  s_status_deferred = false;
+  ipc_request_status(v->id, false);
+}
+
 static PlugState plug_from_wire(int v) {
   if (v == 1) return PLUG_AC;
   if (v == 2) return PLUG_DC;
@@ -60,8 +78,10 @@ static void handle_list(DictionaryIterator *in) {
   app_state_clear_error();
   app_state_apply_vehicle_list(ids, nicks, count);
 
-  const Vehicle *cur = app_state_current_vehicle();
-  if (cur && !cur->have_status) ipc_request_status(cur->id, false);
+  // Ask even when the vehicle already carries status: at launch that
+  // status came out of flash and is stale, and the companion's poll
+  // loop only starts once it has been told which vehicle is current.
+  ipc_request_current_status();
 }
 
 static void handle_status(DictionaryIterator *in) {
@@ -69,17 +89,18 @@ static void handle_status(DictionaryIterator *in) {
   if (!id_t) return;
   VehicleStatus s = {0};
   Tuple *t;
-  if ((t = dict_find(in, MESSAGE_KEY_SOC_PCT)))        s.soc_pct = t->value->uint8;
-  if ((t = dict_find(in, MESSAGE_KEY_RANGE_KM)))       s.range_km = t->value->uint32;
-  if ((t = dict_find(in, MESSAGE_KEY_IS_CHARGING)))    s.is_charging = t->value->uint8 != 0;
-  if ((t = dict_find(in, MESSAGE_KEY_CHARGE_KW_X10)))  s.charge_kw_x10 = t->value->uint32;
-  if ((t = dict_find(in, MESSAGE_KEY_CHARGE_ETA_MIN))) s.charge_eta_min = t->value->uint32;
-  if ((t = dict_find(in, MESSAGE_KEY_PLUG)))           s.plug = plug_from_wire(t->value->int32);
-  if ((t = dict_find(in, MESSAGE_KEY_DOORS_LOCKED)))   s.doors_locked = t->value->uint8 != 0;
-  if ((t = dict_find(in, MESSAGE_KEY_OUTSIDE_TEMP_C))) s.outside_temp_c = t->value->int8;
-  if ((t = dict_find(in, MESSAGE_KEY_ODO_KM)))         s.odo_km = t->value->uint32;
-  if ((t = dict_find(in, MESSAGE_KEY_IS_CLIMATE_ON)))  s.is_climate_on = t->value->uint8 != 0;
-  if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))     s.updated_at = (time_t)t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_SOC_PCT)))         s.soc_pct = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_RANGE_KM)))        s.range_km = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_IS_CHARGING)))     s.is_charging = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_CHARGE_KW_X10)))   s.charge_kw_x10 = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_CHARGE_ETA_MIN)))  s.charge_eta_min = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_PLUG)))            s.plug = plug_from_wire(t->value->int32);
+  if ((t = dict_find(in, MESSAGE_KEY_DOORS_LOCKED)))    s.doors_locked = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_OUTSIDE_TEMP_C)))  s.outside_temp_c = t->value->int8;
+  if ((t = dict_find(in, MESSAGE_KEY_ODO_KM)))          s.odo_km = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_IS_CLIMATE_ON)))   s.is_climate_on = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_AUX_BATTERY_PCT))) s.aux_battery_pct = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))      s.updated_at = (time_t)t->value->uint32;
   app_state_clear_error();
   app_state_apply_status(id_t->value->cstring, &s);
 }
@@ -94,22 +115,25 @@ static void inbox_received(DictionaryIterator *in, void *ctx) {
   if (unit_t) app_state_set_unit_miles(unit_t->value->uint8 != 0);
 
   Tuple *err_t = dict_find(in, MESSAGE_KEY_ERROR_MSG);
+  Tuple *kind_t = dict_find(in, MESSAGE_KEY_RESP_KIND);
+  const char *kind = kind_t ? kind_t->value->cstring : "";
   if (err_t) {
     app_state_set_error(err_t->value->cstring);
-    return;
-  }
-  Tuple *kind_t = dict_find(in, MESSAGE_KEY_RESP_KIND);
-  if (!kind_t) return;
-  const char *kind = kind_t->value->cstring;
-  if (strcmp(kind, "list") == 0) handle_list(in);
-  else if (strcmp(kind, "status") == 0) handle_status(in);
-  else if (strcmp(kind, "ready") == 0) {
-    // Companion connected; trigger the deferred initial fetch.
-    if (app_state_phase() == APP_PHASE_LOADING_LIST) ipc_request_list();
+  } else if (strcmp(kind, "list") == 0) {
+    handle_list(in);
+  } else if (strcmp(kind, "status") == 0) {
+    handle_status(in);
+  } else if (strcmp(kind, "ready") == 0) {
+    // Companion connected; trigger the deferred initial fetch. Restored
+    // vehicles still need it — flash only saved us the blank screen.
+    if (app_state_phase() != APP_PHASE_READY) ipc_request_list();
   } else if (strcmp(kind, "error") == 0) {
-    if (err_t) app_state_set_error(err_t->value->cstring);
-    else app_state_set_error("phone error");
+    app_state_set_error("phone error");
   }
+
+  // The link is free again unless the handling above claimed it, so a
+  // vehicle selected mid-flight gets its turn here.
+  if (s_status_deferred && !app_state_is_busy()) ipc_request_current_status();
 }
 
 static void inbox_dropped(AppMessageResult reason, void *ctx) {

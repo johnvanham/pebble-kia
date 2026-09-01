@@ -27,6 +27,11 @@ class VehicleStatus(BaseModel):
     doors_locked: bool
     outside_temp_c: int
     odo_km: int = Field(..., ge=0)
+    # The 12V battery, not the traction pack. It rides the wire because
+    # the force-refresh rate limit exists to keep telematics wake-ups from
+    # flattening it, and this is the only reading that shows whether that
+    # is working.
+    aux_battery_pct: int = Field(..., ge=0, le=100)
     is_climate_on: bool = False
     updated_at: datetime
 

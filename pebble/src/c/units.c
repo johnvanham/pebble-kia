@@ -13,3 +13,23 @@ int format_distance_km(uint32_t km, char *buf, size_t sz) {
   }
   return snprintf(buf, sz, "%lu km", (unsigned long)km);
 }
+
+void format_age(time_t when, char *buf, size_t sz) {
+  if (when == 0) {
+    snprintf(buf, sz, "--");
+    return;
+  }
+  int secs = (int)(time(NULL) - when);
+  if (secs < 0) secs = 0;
+  if (secs < 60) {
+    snprintf(buf, sz, "%ds ago", secs);
+  } else if (secs < 3600) {
+    snprintf(buf, sz, "%dm ago", secs / 60);
+  } else if (secs < 86400) {
+    snprintf(buf, sz, "%dh ago", secs / 3600);
+  } else {
+    // Data restored from flash after a few days off the charger reads
+    // better as "3d ago" than as "74h ago".
+    snprintf(buf, sz, "%dd ago", secs / 86400);
+  }
+}

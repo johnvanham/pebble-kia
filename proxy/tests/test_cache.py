@@ -46,6 +46,7 @@ def _status(soc: int = 50) -> VehicleStatus:
         doors_locked=True,
         outside_temp_c=18,
         odo_km=12345,
+        aux_battery_pct=87,
         updated_at=datetime.now(timezone.utc),
     )
 
