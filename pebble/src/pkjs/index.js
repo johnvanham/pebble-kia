@@ -49,11 +49,19 @@ function sendError(msg) {
   Pebble.sendAppMessage({ RESP_KIND: 'error', ERROR_MSG: msg });
 }
 
-function friendlyHttpError(status) {
+function friendlyHttpError(status, body) {
+  // The proxy already says exactly what went wrong and what to do about
+  // it ("Kia needs consent - open the Kia app and accept"), so prefer
+  // that over anything restated here. Only Kia's failures are worth
+  // spelling out; the rest are the watch's own fault and stay generic.
+  try {
+    var detail = JSON.parse(body).detail;
+    if (typeof detail === 'string' && detail) return detail;
+  } catch (e) { /* not JSON, fall through */ }
   if (status === 401) return 'Bad proxy token';
   if (status === 403) return 'Proxy forbidden';
   if (status === 404) return 'Vehicle not found';
-  if (status === 501) return 'Live mode not ready';
+  if (status === 429) return 'Kia rate limited';
   if (status >= 500)  return 'Proxy error ' + status;
   if (status >= 400)  return 'Request rejected ' + status;
   return 'HTTP ' + status;
@@ -77,7 +85,7 @@ function httpCall(method, path, cb) {
       try { return cb(null, JSON.parse(req.responseText)); }
       catch (e) { return cb(new Error('Bad proxy reply')); }
     }
-    cb(new Error(friendlyHttpError(req.status)));
+    cb(new Error(friendlyHttpError(req.status, req.responseText)));
   };
   try { req.send(); }
   catch (e) { cb(new Error("Can't reach proxy")); }

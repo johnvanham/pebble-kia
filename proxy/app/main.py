@@ -107,9 +107,9 @@ app = FastAPI(title="pebble-kia-proxy", version="0.1.0", lifespan=lifespan)
 # statuses the companion turns into readable strings rather than a
 # blanket 500.
 _KIA_STATUS: list[tuple[type[Exception], int, str]] = [
-    (ConsentRequiredError, 503, "Kia needs consent — open the Kia app and accept"),
+    (ConsentRequiredError, 503, "Kia needs consent - open the Kia app and accept"),
     (AuthenticationOTPRequired, 503, "Kia login needs a one-time password"),
-    (AuthenticationError, 502, "Kia login failed — check KIA_USERNAME / KIA_PASSWORD"),
+    (AuthenticationError, 502, "Kia login failed - check KIA_USERNAME / KIA_PASSWORD"),
     (RateLimitingError, 429, "Kia is rate limiting this account"),
     (NoDataFound, 404, "Kia has no data for this vehicle"),
     (DuplicateRequestError, 503, "Kia is still processing the previous request"),
