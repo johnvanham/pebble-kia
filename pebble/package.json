@@ -1,7 +1,8 @@
 {
   "name": "pebble-kia",
-  "author": "johnvanham",
+  "author": "John Van Ham",
   "version": "0.1.0",
+  "description": "Kia vehicle stats on your Pebble: charge, range, doors and charging status via a self-hosted Kia Connect proxy.",
   "keywords": [
     "pebble-app"
   ],
@@ -47,7 +48,14 @@
       "AUX_BATTERY_PCT"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
     },
     "capabilities": [
       "configurable"
