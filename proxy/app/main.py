@@ -149,8 +149,8 @@ def list_vehicles():
 @app.get("/vehicles/{vehicle_id}/status",
          response_model=StatusResponse,
          dependencies=[Depends(verify_bearer)])
-def get_status(vehicle_id: str, force: int = 0):
-    return _status(vehicle_id, bool(force))
+def get_status(vehicle_id: str, force: int = 0, fresh: int = 0):
+    return _status(vehicle_id, bool(force), fresh=bool(fresh))
 
 
 @app.post("/vehicles/{vehicle_id}/refresh",
@@ -175,7 +175,7 @@ def _cached_status(vehicle_id: str) -> VehicleStatus:
     return status_obj
 
 
-def _status(vehicle_id: str, force: bool) -> StatusResponse:
+def _status(vehicle_id: str, force: bool, fresh: bool = False) -> StatusResponse:
     source: DataSource = app.state.source
     cache: StatusCache = app.state.cache
 
@@ -188,8 +188,11 @@ def _status(vehicle_id: str, force: bool) -> StatusResponse:
                 detail=f"vehicle not found: {vehicle_id}",
             )
 
+    # force wins over fresh: the cache drops bypass_fresh the moment
+    # force enters, so a force=1&fresh=1 request keeps the downgrade
+    # semantics.
     status_obj, wall_fetched, from_cache, forced = cache.get_or_fetch(
-        vehicle_id, do_fetch, force=force
+        vehicle_id, do_fetch, force=force, bypass_fresh=fresh
     )
     return StatusResponse(
         id=vehicle_id,

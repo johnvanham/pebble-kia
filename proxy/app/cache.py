@@ -49,6 +49,8 @@ class StatusCache:
         vehicle_id: str,
         fetch: Callable[[bool], VehicleStatus],
         force: bool,
+        *,
+        bypass_fresh: bool = False,
     ) -> tuple[VehicleStatus, float, bool, bool]:
         """Return (status, wall_fetched_at_epoch, from_cache, forced).
 
@@ -59,6 +61,10 @@ class StatusCache:
         downgraded rather than refused: it serves a fresh cache entry if
         there is one, otherwise fetches unforced. `forced` reports what
         actually happened so the caller can tell a wake from a downgrade.
+
+        `bypass_fresh` makes an ordinary read skip the fresh-entry
+        shortcut and fetch unforced anyway, storing the result like any
+        other fetch. It never touches the forced path.
         """
         now_mono = time.monotonic()
         with self._lock:
@@ -68,12 +74,16 @@ class StatusCache:
                 and (now_mono - entry.fetched_at) < self.min_interval
             )
             if force:
+                # A downgraded force still serves the fresh entry —
+                # bypass_fresh only applies to reads that were ordinary
+                # from the start.
+                bypass_fresh = False
                 last_forced = self._last_forced_at.get(vehicle_id)
                 force = (
                     last_forced is None
                     or (now_mono - last_forced) >= self.force_min_interval
                 )
-            if not force and fresh:
+            if not force and fresh and not bypass_fresh:
                 assert entry is not None
                 return entry.status, entry.wall_fetched_at, True, False
 

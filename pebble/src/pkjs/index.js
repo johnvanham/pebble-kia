@@ -67,10 +67,19 @@ function friendlyHttpError(status, body) {
   return 'HTTP ' + status;
 }
 
+// Errors that mean the request never reached the proxy carry
+// err.neverSent so callers can distinguish "retry is free" from "the
+// backend answered and retrying hammers it".
+function neverSentError(msg) {
+  var e = new Error(msg);
+  e.neverSent = true;
+  return e;
+}
+
 function httpCall(method, path, cb) {
   var cfg = getConfig();
   if (!cfg.url || !cfg.token) {
-    return cb(new Error('Open Settings to configure proxy'));
+    return cb(neverSentError('Open Settings to configure proxy'));
   }
   var req = new XMLHttpRequest();
   req.open(method, cfg.url + path, true);
@@ -80,7 +89,7 @@ function httpCall(method, path, cb) {
   req.ontimeout = function () { timedOut = true; };
   req.onloadend = function () {
     if (timedOut) return cb(new Error('Proxy timed out'));
-    if (req.status === 0) return cb(new Error("Can't reach proxy"));
+    if (req.status === 0) return cb(neverSentError("Can't reach proxy"));
     if (req.status >= 200 && req.status < 300) {
       try { return cb(null, JSON.parse(req.responseText)); }
       catch (e) { return cb(new Error('Bad proxy reply')); }
@@ -88,7 +97,7 @@ function httpCall(method, path, cb) {
     cb(new Error(friendlyHttpError(req.status, req.responseText)));
   };
   try { req.send(); }
-  catch (e) { cb(new Error("Can't reach proxy")); }
+  catch (e) { cb(neverSentError("Can't reach proxy")); }
 }
 
 function httpGet(path, cb)  { httpCall('GET', path, cb); }
@@ -125,6 +134,17 @@ function statusMessage(vehicleId, data) {
 
 var currentVehicleId = null;
 
+// The JS runtime restarts with every app launch, so this flag makes the
+// session's first ordinary status fetch ask the proxy to bypass its
+// cache: opening the app shows what Kia's servers hold now, not a copy
+// up to the proxy's TTL old. Still an ordinary read — the car is never
+// woken for this. Re-armed only when the request never reached the
+// proxy (unreachable, unconfigured): the launch keeps its freshness
+// through a connectivity blip, but a proxy or Kia failure must not turn
+// the 15s poll into a cache-bypassing retry storm — that would unbound
+// exactly the upstream call rate LIVE_REFRESH_MIN_SECONDS exists to cap.
+var needFreshStatus = true;
+
 function handleListRequest() {
   httpGet('/vehicles', function (err, data) {
     if (err) return sendError(err.message);
@@ -149,11 +169,17 @@ function handleListRequest() {
 
 function fetchAndDispatch(vehicleId, force) {
   var go = force ? httpPost : httpGet;
+  var wantFresh = !force && needFreshStatus;
+  if (wantFresh) needFreshStatus = false;
   var path = force
     ? '/vehicles/' + encodeURIComponent(vehicleId) + '/refresh'
-    : '/vehicles/' + encodeURIComponent(vehicleId) + '/status';
+    : '/vehicles/' + encodeURIComponent(vehicleId) + '/status' +
+      (wantFresh ? '?fresh=1' : '');
   go(path, function (err, data) {
-    if (err) return sendError(err.message);
+    if (err) {
+      if (wantFresh && err.neverSent) needFreshStatus = true;
+      return sendError(err.message);
+    }
     Pebble.sendAppMessage(statusMessage(vehicleId, data), null, function () {
       sendError('Watch inbox full');
     });

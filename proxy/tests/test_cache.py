@@ -86,6 +86,65 @@ def test_ttl_expiry_refetches(clock):
     assert fetch.calls == [False, False]
 
 
+def test_bypass_fresh_refetches_inside_ttl(clock):
+    cache = StatusCache(min_interval_seconds=600)
+    fetch = FakeFetch()
+
+    cache.get_or_fetch("v1", fetch, force=False)
+    clock.advance(1)
+    _, _, from_cache, forced = cache.get_or_fetch(
+        "v1", fetch, force=False, bypass_fresh=True
+    )
+
+    assert (from_cache, forced) == (False, False)
+    assert fetch.calls == [False, False]
+
+
+def test_bypass_fresh_result_serves_later_ordinary_reads(clock):
+    cache = StatusCache(min_interval_seconds=600)
+    fetch = FakeFetch()
+
+    status, _, _, _ = cache.get_or_fetch(
+        "v1", fetch, force=False, bypass_fresh=True
+    )
+    clock.advance(60)
+    again, _, from_cache, _ = cache.get_or_fetch("v1", fetch, force=False)
+
+    assert from_cache is True
+    assert again is status
+    assert fetch.calls == [False]
+
+
+def test_bypass_fresh_does_not_change_a_forced_read(clock):
+    cache = StatusCache(min_interval_seconds=600)
+    fetch = FakeFetch()
+
+    cache.get_or_fetch("v1", fetch, force=False)
+    clock.advance(1)
+    _, _, from_cache, forced = cache.get_or_fetch(
+        "v1", fetch, force=True, bypass_fresh=True
+    )
+
+    assert (from_cache, forced) == (False, True)
+    assert fetch.calls == [False, True]
+
+
+def test_bypass_fresh_does_not_change_a_downgraded_force(clock):
+    cache = StatusCache(min_interval_seconds=600, force_min_interval_seconds=900)
+    fetch = FakeFetch()
+
+    cache.get_or_fetch("v1", fetch, force=True)
+    clock.advance(60)
+    _, _, from_cache, forced = cache.get_or_fetch(
+        "v1", fetch, force=True, bypass_fresh=True
+    )
+
+    # The downgrade must still serve the fresh entry, exactly as it
+    # would with no bypass_fresh at all.
+    assert (from_cache, forced) == (True, False)
+    assert fetch.calls == [True]
+
+
 def test_force_bypasses_fresh_entry(clock):
     cache = StatusCache(min_interval_seconds=600)
     fetch = FakeFetch()

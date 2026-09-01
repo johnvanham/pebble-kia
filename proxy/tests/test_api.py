@@ -86,6 +86,42 @@ def test_force_query_param_matches_the_refresh_route(client):
     assert r.json()["from_cache"] is False
 
 
+def test_fresh_bypasses_the_cache_without_forcing(client):
+    client.get("/vehicles/pv5-demo/status", headers=auth())
+    r = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth())
+    body = r.json()
+    assert body["from_cache"] is False
+    assert body["forced"] is False
+
+
+def test_fresh_result_serves_the_next_ordinary_read(client):
+    client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth())
+    r = client.get("/vehicles/pv5-demo/status", headers=auth())
+    assert r.json()["from_cache"] is True
+
+
+def test_fresh_with_force_keeps_force_semantics(client):
+    client.get("/vehicles/pv5-demo/status", headers=auth())
+    r = client.get("/vehicles/pv5-demo/status?force=1&fresh=1", headers=auth())
+    body = r.json()
+    assert body["from_cache"] is False
+    assert body["forced"] is True
+
+
+def test_fresh_with_force_still_downgrades_inside_the_floor(client):
+    from app.main import app
+
+    # Demo runs with a zero force floor; raise it so the second force
+    # lands inside the window and must downgrade to the cache entry,
+    # fresh=1 notwithstanding.
+    app.state.cache.force_min_interval = 900
+    client.get("/vehicles/pv5-demo/status?force=1", headers=auth())
+    r = client.get("/vehicles/pv5-demo/status?force=1&fresh=1", headers=auth())
+    body = r.json()
+    assert body["from_cache"] is True
+    assert body["forced"] is False
+
+
 def test_unknown_vehicle_is_a_404(client):
     r = client.get("/vehicles/not-a-car/status", headers=auth())
     assert r.status_code == 404
