@@ -109,7 +109,9 @@ KIA_BRAND=1      # 1=Kia, 2=Hyundai, 3=Genesis
 ```
 
 Same credentials as the official app — there is no browser bootstrap or
-token capture step. Accept any outstanding consent prompt in the Kia app
+token capture step. `KIA_PIN` is the PIN the app asks for before a remote
+command. Reads work without it; with it empty, every action comes back
+502 `Kia error: PIN verification failed`. Accept any outstanding consent prompt in the Kia app
 first, or the first login fails. Wrap the password in single quotes if
 it contains a `$` or a `#`: `docker compose` reads `.env` for its own
 interpolation, so an unquoted `$` silently truncates the password
