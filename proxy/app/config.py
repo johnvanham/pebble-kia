@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The QR directory defaults relative to this package, not to the process
@@ -71,6 +71,20 @@ class Settings(BaseSettings):
     # QR rather than encoding a guess.
     proxy_public_url: str = Field("", alias="PROXY_PUBLIC_URL")
     log_level: str = Field("info", alias="LOG_LEVEL")
+
+    @model_validator(mode="after")
+    def _commands_need_a_pin(self):
+        # A CCS2 car mints a control token by PUTing the PIN to Kia
+        # before every lock, unlock or charge command; reads never do.
+        # Without this the proxy starts clean, serves status happily,
+        # and only fails at the first action with a 502 from Kia.
+        if self.data_source == "live" and self.enable_commands and not self.kia_pin:
+            raise ValueError(
+                "ENABLE_COMMANDS=1 needs KIA_PIN — remote commands fail at Kia "
+                "without it. Set the PIN the official app asks for, or "
+                "ENABLE_COMMANDS=0."
+            )
+        return self
 
     @field_validator("setup_qr_dir", mode="before")
     @classmethod

@@ -145,6 +145,11 @@ Add to `.env` if you want it:
 ENABLE_COMMANDS=1
 ```
 
+On `DATA_SOURCE=live` this also needs `KIA_PIN`, and the proxy refuses
+to start without it — a CCS2 car takes every command through a control
+token minted from the PIN, so the alternative is a proxy that reads
+fine and 502s on the first unlock.
+
 `COMMAND_MIN_SECONDS` (default 10) spaces commands apart; one sent
 inside the window is rejected with a 429 rather than queued.
 

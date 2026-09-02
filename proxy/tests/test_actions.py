@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 PROXY_DIR = Path(__file__).resolve().parent.parent
 TOKEN = "test-token-123"
@@ -162,3 +163,32 @@ def test_a_refused_command_does_not_stamp_the_throttle(client):
     r = client.post("/vehicles/not-a-car/actions/dance", headers=auth())
     assert r.status_code == 400
     assert app.state.command_throttle.seconds_until_allowed("not-a-car") == 0.0
+
+
+def test_live_commands_without_a_pin_refuse_to_start():
+    # A CCS2 command needs a control token minted from the PIN, so this
+    # combination can only ever fail at Kia — better at boot than at the
+    # owner's first unlock.
+    from app.config import Settings
+
+    with pytest.raises(ValidationError, match="KIA_PIN"):
+        Settings(  # type: ignore[call-arg]
+            PROXY_BEARER_TOKEN="x",
+            DATA_SOURCE="live",
+            ENABLE_COMMANDS="1",
+            KIA_PIN="",
+            _env_file=None,
+        )
+
+
+def test_live_reads_without_a_pin_are_fine():
+    from app.config import Settings
+
+    settings = Settings(  # type: ignore[call-arg]
+        PROXY_BEARER_TOKEN="x",
+        DATA_SOURCE="live",
+        ENABLE_COMMANDS="0",
+        KIA_PIN="",
+        _env_file=None,
+    )
+    assert settings.kia_pin == ""

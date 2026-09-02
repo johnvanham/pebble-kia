@@ -252,7 +252,9 @@ deliberately narrow and off by default.
   granted reads, so its blast radius was "someone can watch the car's
   state". A leaked token must not silently gain unlock; turning
   mutation on is a deliberate operator decision on the proxy side,
-  never a default.
+  never a default. On `live` it also requires `KIA_PIN`, checked at
+  startup: reads never need the PIN, so an empty one leaves a proxy
+  that looks healthy until the first action fails inside Kia.
 - `COMMAND_MIN_SECONDS` floors the interval between commands. A
   command inside the window is refused with a 429 rather than queued —
   silently dropping a lock request would be worse than an error. The
