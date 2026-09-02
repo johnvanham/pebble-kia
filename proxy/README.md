@@ -79,7 +79,9 @@ POST /vehicles/{id}/actions/set_charge_limit?ac=80&dc=100
 Both are required and each must be a multiple of ten between 10 and
 100 — Kia writes the pair in one call, so sending one alone would
 overwrite the other, and a value off that grid is refused rather than
-rounded into shape. `COMMAND_MIN_SECONDS` floors the interval between
+rounded into shape. This is the one command not yet confirmed against
+a real CCS2 car: the library posts it to the pre-CCS2 `/charge/target`
+path rather than a `/ccs2/` route. `COMMAND_MIN_SECONDS` floors the interval between
 commands; a command inside the window is refused with a 429 rather
 than queued, because silently dropping a lock request would be worse
 than an error. The slot is claimed before the send rather than stamped

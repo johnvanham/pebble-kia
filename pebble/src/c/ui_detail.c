@@ -198,17 +198,27 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   y += LAYOUT_H_ROW;
 
   // What the car expects to have in it once each limit is reached —
-  // the number that makes an 80% cap mean something.
+  // the number that makes an 80% cap mean something. Each half stands
+  // or falls on its own: 0 is "not reported", and pairing it with a
+  // real reading would render a confident "0 mi at the AC limit".
   if (v->target_range_ac_km == 0 && v->target_range_dc_km == 0) {
     snprintf(buf, sizeof(buf), "--");
   } else {
     char ac[12];
     char dc[12];
-    format_distance_km(v->target_range_ac_km, ac, sizeof(ac));
-    format_distance_km(v->target_range_dc_km, dc, sizeof(dc));
-    // Only the second reading needs its unit spelled out.
-    char *space = strchr(ac, ' ');
-    if (space) *space = 0;
+    if (v->target_range_ac_km == 0) {
+      snprintf(ac, sizeof(ac), "--");
+    } else {
+      format_distance_km(v->target_range_ac_km, ac, sizeof(ac));
+      // Only the second reading needs its unit spelled out.
+      char *space = strchr(ac, ' ');
+      if (space) *space = 0;
+    }
+    if (v->target_range_dc_km == 0) {
+      snprintf(dc, sizeof(dc), "--");
+    } else {
+      format_distance_km(v->target_range_dc_km, dc, sizeof(dc));
+    }
     snprintf(buf, sizeof(buf), "%s/%s", ac, dc);
   }
   draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "At limit", buf);

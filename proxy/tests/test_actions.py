@@ -155,11 +155,16 @@ def test_defrost_lights_the_de_icing_surfaces(client):
         False, False, False)
 
 
-def test_plain_climate_leaves_the_heaters_alone(client):
+def test_plain_climate_does_not_light_the_heaters(client):
+    # Starting from defrost, not from the baseline: the demo file already
+    # has the heaters off, so asserting they are off after start_climate
+    # would pass whatever the action did.
+    client.post("/vehicles/pv5-demo/actions/start_defrost", headers=auth())
     client.post("/vehicles/pv5-demo/actions/start_climate", headers=auth())
     s = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()["status"]
     assert s["is_climate_on"] is True
-    assert s["defrost_on"] is False
+    assert (s["defrost_on"], s["rear_defrost_on"], s["wheel_heat_on"]) == (
+        False, False, False)
 
 
 def test_set_charge_limit_writes_both_targets(client):

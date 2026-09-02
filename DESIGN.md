@@ -263,6 +263,13 @@ deliberately narrow and off by default.
   would overwrite the other with whatever the caller omitted. Values
   off that grid are refused rather than rounded — a silently corrected
   85 would leave the watch showing a limit the car never got.
+- `set_charge_limit` is the one command not yet confirmed against the
+  real PV5. The library posts it to the pre-CCS2 `/charge/target` path
+  — the same shape of evidence that condemned valet mode above —
+  though unlike valet it does pass CCS2-aware headers, and the
+  adjacent V2L discharge-limit call does use a `/ccs2/` route. If Kia
+  rejects it the watch surfaces the error like any other failure;
+  nothing else depends on it. Confirm before treating it as working.
 - Valet mode was dropped in phase 9. It was never a PV5 feature: it is
   an infotainment privacy lockdown on older head units, unrelated to
   utility mode (which keeps the sockets and HVAC alive with the car in
@@ -441,7 +448,7 @@ to any inbox message. This avoids the window where the watch would
 otherwise send before pypkjs (or the mobile app's JS runtime) has
 attached.
 
-Four of those readings have no library accessor on a CCS2 car and come
+Three of those readings have no library accessor on a CCS2 car and come
 straight off the raw payload or are derived in `live.py`:
 
 - Battery conditioning is the union of three nodes —
