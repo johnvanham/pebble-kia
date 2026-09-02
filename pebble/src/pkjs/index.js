@@ -2,10 +2,6 @@
 // in the emulator). Translates AppMessage requests from the watch into
 // HTTP calls against the self-hosted proxy, packs responses back, and
 // keeps the watch UI live while the app is open.
-//
-// Notifications are driven from the proxy via ntfy + OS notification
-// bridging, NOT from here — that way pushes reach the watch even when
-// this companion isn't running. Keeping them here too would duplicate.
 
 var Clay = require('pebble-clay');
 var clayConfig = require('./config');
@@ -14,6 +10,13 @@ var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 
 var MAX_VEHICLES = 4;
 var POLL_MS = 15000;
+// A wake takes about 30 s on a CCS2 car: the Kia library triggers it,
+// waits for the car to report, then reads the result. An ordinary
+// status read can turn into one too — the proxy upgrades a stale poll
+// while the car is charging, and a read that lands during someone
+// else's wake waits for that wake's answer. Long enough for all of
+// that; short enough that a black-holed proxy still surfaces.
+var HTTP_TIMEOUT_MS = 60000;
 
 function log(msg) { console.log('[kia] ' + msg); }
 
@@ -67,29 +70,20 @@ function friendlyHttpError(status, body) {
   return 'HTTP ' + status;
 }
 
-// Errors that mean the request never reached the proxy carry
-// err.neverSent so callers can distinguish "retry is free" from "the
-// backend answered and retrying hammers it".
-function neverSentError(msg) {
-  var e = new Error(msg);
-  e.neverSent = true;
-  return e;
-}
-
 function httpCall(method, path, cb) {
   var cfg = getConfig();
   if (!cfg.url || !cfg.token) {
-    return cb(neverSentError('Open Settings to configure proxy'));
+    return cb(new Error('Open Settings to configure proxy'));
   }
   var req = new XMLHttpRequest();
   req.open(method, cfg.url + path, true);
   req.setRequestHeader('Authorization', 'Bearer ' + cfg.token);
-  req.timeout = 15000;
+  req.timeout = HTTP_TIMEOUT_MS;
   var timedOut = false;
   req.ontimeout = function () { timedOut = true; };
   req.onloadend = function () {
     if (timedOut) return cb(new Error('Proxy timed out'));
-    if (req.status === 0) return cb(neverSentError("Can't reach proxy"));
+    if (req.status === 0) return cb(new Error("Can't reach proxy"));
     if (req.status >= 200 && req.status < 300) {
       try { return cb(null, JSON.parse(req.responseText)); }
       catch (e) { return cb(new Error('Bad proxy reply')); }
@@ -97,7 +91,7 @@ function httpCall(method, path, cb) {
     cb(new Error(friendlyHttpError(req.status, req.responseText)));
   };
   try { req.send(); }
-  catch (e) { cb(neverSentError("Can't reach proxy")); }
+  catch (e) { cb(new Error("Can't reach proxy")); }
 }
 
 function httpGet(path, cb)  { httpCall('GET', path, cb); }
@@ -138,23 +132,22 @@ function statusMessage(vehicleId, data) {
     // -128 is the "no reading" sentinel: 0 degC is a real temperature.
     BATT_TEMP_C: s.batt_temp_c == null ? -128 : s.batt_temp_c | 0,
     UPDATED_AT: parseIsoSeconds(s.updated_at),
+    // Whether the car itself was woken for this reading. The watch uses
+    // it two ways: to skip its launch wake when the reply it is
+    // answering already came from the car, and to know that an ordinary
+    // poll reply is not the wake it is still waiting on.
+    FORCED: data && data.forced ? 1 : 0,
     UNIT_MILES: getConfig().unitMiles ? 1 : 0
   };
 }
 
 var currentVehicleId = null;
-
-// The JS runtime restarts with every app launch, so this flag makes the
-// session's first ordinary status fetch ask the proxy to bypass its
-// cache: opening the app shows what Kia's servers hold now, not a copy
-// up to the proxy's TTL old. Still an ordinary read — the car is never
-// woken for this. Re-armed only when the request never reached the
-// proxy (unreachable, unconfigured): the launch keeps its freshness
-// through a connectivity blip, but a proxy or Kia failure must not turn
-// the 15s poll into a cache-bypassing retry storm — that would unbound
-// exactly the upstream call rate LIVE_REFRESH_MIN_SECONDS exists to cap.
-// Also armed once after a successful action — see handleActionRequest.
-var needFreshStatus = true;
+// Status requests currently waiting on the proxy. The poll loop stays
+// out while this is non-zero: a wake holds a request for tens of
+// seconds, and a new poll every 15 s on top of it would only queue
+// duplicates behind the same answer. Requests the watch makes itself
+// are never held back by it.
+var statusInFlight = 0;
 
 function handleListRequest() {
   httpGet('/vehicles', function (err, data) {
@@ -178,19 +171,20 @@ function handleListRequest() {
   });
 }
 
-function fetchAndDispatch(vehicleId, force) {
-  var go = force ? httpPost : httpGet;
-  var wantFresh = !force && needFreshStatus;
-  if (wantFresh) needFreshStatus = false;
-  var path = force
-    ? '/vehicles/' + encodeURIComponent(vehicleId) + '/refresh'
-    : '/vehicles/' + encodeURIComponent(vehicleId) + '/status' +
-      (wantFresh ? '?fresh=1' : '');
-  go(path, function (err, data) {
-    if (err) {
-      if (wantFresh && err.neverSent) needFreshStatus = true;
-      return sendError(err.message);
-    }
+// force wakes the car (POST /refresh); fresh makes one ordinary read
+// skip the proxy's cache window without waking anything, charging or
+// not. Neither: the proxy's copy, or Kia's, whichever the proxy's own
+// rules pick — including a wake if the car is charging and the last one
+// has aged out.
+function fetchStatus(vehicleId, opts) {
+  var force = !!(opts && opts.force);
+  var fresh = !!(opts && opts.fresh);
+  var path = '/vehicles/' + encodeURIComponent(vehicleId) +
+    (force ? '/refresh' : '/status' + (fresh ? '?fresh=1' : ''));
+  statusInFlight++;
+  (force ? httpPost : httpGet)(path, function (err, data) {
+    statusInFlight--;
+    if (err) return sendError(err.message);
     Pebble.sendAppMessage(statusMessage(vehicleId, data), null, function () {
       sendError('Watch inbox full');
     });
@@ -200,7 +194,7 @@ function fetchAndDispatch(vehicleId, force) {
 function handleStatusRequest(vehicleId, force) {
   if (!vehicleId) return sendError('No vehicle selected');
   currentVehicleId = vehicleId;
-  fetchAndDispatch(vehicleId, force);
+  fetchStatus(vehicleId, { force: force });
 }
 
 function handleActionRequest(vehicleId, action) {
@@ -215,12 +209,13 @@ function handleActionRequest(vehicleId, action) {
         sendError('Watch inbox full');
       });
     // The car reports its new state to Kia moments after executing a
-    // command, so one ordinary cache-bypassing read shows the outcome
-    // without waking anything. Deliberate reuse of the launch flag.
+    // command, so one cache-skipping read shows the outcome without the
+    // half-minute a wake would cost. fresh=1 is exempt from the
+    // charging upgrade for exactly this reason: stopping a charge must
+    // not be followed by waking the car to ask about it.
     setTimeout(function () {
       if (currentVehicleId !== vehicleId) return;
-      needFreshStatus = true;
-      fetchAndDispatch(vehicleId, false);
+      fetchStatus(vehicleId, { fresh: true });
     }, 8000);
   });
 }
@@ -228,15 +223,18 @@ function handleActionRequest(vehicleId, action) {
 // --- Polling loop ----------------------------------------------------
 //
 // Kicks off once on ready and then every POLL_MS while the companion is
-// alive. Only polls the current vehicle and only updates the UI —
-// notifications come from the proxy's own detector via ntfy, so there
-// is no diff/notify logic here.
+// alive. Only polls the current vehicle and only updates the UI. The
+// proxy serves its own copy until LIVE_REFRESH_MIN_SECONDS is up —
+// except while the car is charging, when a poll arriving
+// LIVE_CHARGING_REFRESH_SECONDS after the last wake becomes one itself,
+// so this loop is what keeps the charge rate and ETA moving on the
+// wrist.
 
 var pollTimer = null;
 
 function pollTick() {
-  if (!currentVehicleId) return;
-  fetchAndDispatch(currentVehicleId, false);
+  if (!currentVehicleId || statusInFlight > 0) return;
+  fetchStatus(currentVehicleId, {});
 }
 
 function startPolling() {

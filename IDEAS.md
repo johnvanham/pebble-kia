@@ -1,8 +1,8 @@
 # IDEAS.md
 
-Polish / embellishment candidates to consider before (or during) phase 3.
-Nothing here is committed work — this is a parking lot. Anything that
-actually lands should move into `DESIGN.md`'s phased plan.
+Polish / embellishment candidates. Nothing here is committed work —
+this is a parking lot. Anything that actually lands should move into
+`DESIGN.md`'s phased plan.
 
 ## Warning: bloat risk
 
@@ -48,19 +48,21 @@ anything off this list:
 - **Timeline pins** for `CHARGE_ETA_MIN` — when charging starts with a
   known ETA, push a pin via the Rebble timeline service so the watch
   shows "charge complete ~ 14:30" in its calendar view. Requires the
-  companion to have timeline tokens; Rebble docs cover the API.
-- **Richer notification routing.** Today pushes go through a single
-  self-hosted ntfy topic that every subscribed device receives. Future
-  work: per-device topic selection in the phone UI (only care about
-  charge events on tablet, everything on phone), severity-tuned
-  vibrations, snoozable alerts.
+  companion to have timeline tokens; Rebble docs cover the API. (The
+  proxy no longer watches for transitions, so the companion would have
+  to notice the ETA itself while the app is open.)
 
 ## Configuration
 
-- **Refresh-interval preference** — Clay field for how often the watch
-  auto-polls on top of user-triggered refreshes. Would need a timer on
-  the watch and coordination with the proxy's rate limit so the client
-  doesn't just get cached responses forever.
+- **Refresh-interval preference** — Clay field for how often the
+  companion polls while the app is open (hard-coded at 15s today), for
+  anyone who wants a slower or faster wrist update than the default.
+- **Charging cadence from the phone** — a Clay field for the
+  charging-refresh window, so it can be tuned without editing the
+  proxy's `.env`. Would mean the companion sending a hint the proxy
+  honours per request rather than a proxy-wide setting — which would
+  also confine the charging wakes to the watch instead of every
+  polling client.
 
 ## Reliability / UX
 

@@ -1,6 +1,6 @@
 # Pebble Kia Watch App — Design
 
-Status: all seven phases built. Live Kia data flows watch -> companion ->
+Status: all eight phases built. Live Kia data flows watch -> companion ->
 proxy -> Kia Connect, and watch-initiated remote commands flow the same
 path back to the car when the proxy opts in (`ENABLE_COMMANDS`).
 
@@ -55,9 +55,9 @@ Three tiers, each with a specific job:
    HTTPS with a shared secret, pushes results back. Holds no Kia credentials.
 
 3. **Self-hosted proxy (Python + FastAPI).** Wraps `hyundai_kia_connect_api`.
-   Owns the Kia session, caches vehicle state, rate-limits refreshes to protect
-   the 12V battery, exposes a tiny JSON API for the companion. Deployed to a
-   small VPS or home server in the EU region.
+   Owns the Kia session, caches vehicle state, coalesces concurrent
+   refreshes into one wake, exposes a tiny JSON API for the companion.
+   Deployed to a small VPS or home server in the EU region.
 
 ### Why three tiers
 
@@ -94,8 +94,8 @@ thereafter.
   reimplement auth, duplicating effort and multiplying 12V-drain risk on
   the vehicle.
 - No background execution. PebbleKit JS only runs when the watch pokes
-  it, so "notify me when charging completes" type features need a server
-  anyway.
+  it, so anything that has to happen while the app is closed needs a
+  server anyway.
 
 Given the Pi + Caddy infra is already there and the proxy is reused by
 other clients, direct mode is explicitly **rejected for this project**.
@@ -109,14 +109,14 @@ informed choice to strip the proxy out.
 - Python 3.13, FastAPI, `hyundai_kia_connect_api` as a dependency.
 - Endpoints:
   - `GET /vehicles` — list vehicles on the account (id, VIN, nickname, model).
-  - `GET /vehicles/{id}/status` — cached state. `?fresh=1` skips the
-    freshness window (`LIVE_REFRESH_MIN_SECONDS`) for one ordinary
-    read — the state Kia's servers already hold, never a wake; the
-    companion sends it on its first status request each session so
-    launch always shows current data. `?force=1` wakes the vehicle
-    (rate-limited, default ≥ 15 minutes between wakes). When both are
-    sent, force wins.
-  - `POST /vehicles/{id}/refresh` — explicit refresh, same rate limit.
+  - `GET /vehicles/{id}/status` — the proxy's copy while it is younger
+    than `LIVE_REFRESH_MIN_SECONDS`, else Kia's copy. `?fresh=1` skips
+    that window for one ordinary read — still never a wake; the
+    companion sends it once after a remote command. `?force=1` wakes
+    the vehicle. While the car is charging, a plain read of an entry
+    older than `LIVE_CHARGING_REFRESH_SECONDS` becomes a wake on its
+    own. When both flags are sent, force wins. See "Refresh model".
+  - `POST /vehicles/{id}/refresh` — same as `force=1`.
   - `POST /vehicles/{id}/actions/{action}` — remote command, gated
     behind `ENABLE_COMMANDS` — see "Remote commands" below.
 - Auth: single shared bearer token in an env var; the companion sends it on
@@ -150,29 +150,91 @@ two implementations selected by the `DATA_SOURCE` env var:
   boundary so the wire contract stays metric.
 
 Both sources sit behind the same cache layer. Cache TTL is source-
-specific: `LIVE_REFRESH_MIN_SECONDS` (default 600) protects the 12V
-battery on live; `DEMO_REFRESH_MIN_SECONDS` (default 5) keeps scenario
-progression visible to polling clients without a long-press refresh
-every tick. Clients (watch, HA, dashboard) are unaware of which source
-is serving them.
+specific: `LIVE_REFRESH_MIN_SECONDS` (default 600) bounds how often an
+ordinary read reaches Kia on live; `DEMO_REFRESH_MIN_SECONDS` (default
+5) keeps scenario progression visible to polling clients. Clients
+(watch, HA, dashboard) are unaware of which source is serving them.
 
-There are two distinct kinds of upstream read, and the difference
-matters for the 12V battery:
+#### Refresh model
+
+There are two kinds of upstream read. The policy around them was
+rewritten in phase 8 — the phased plan records what it replaced.
 
 - An ordinary read asks Kia for the state the vehicle last reported.
-  It costs an API call and nothing else — the car stays asleep. This is
-  what the watch's 15s poll and the detector both do, and
-  `LIVE_REFRESH_MIN_SECONDS` bounds how often it reaches Kia. The
-  launch-time `fresh=1` read is still an ordinary read — it skips that
-  freshness window for one call and leaves the force floor untouched.
-- A forced read (`?force=1`, `POST /refresh`, the watch's long-press)
-  wakes the telematics unit for genuinely current data. That draws on
-  the 12V battery, so it has its own harder floor,
-  `LIVE_FORCE_MIN_SECONDS` (default 900). A forced read inside that
-  window is **downgraded, not refused**: the client gets cached data
-  and `forced: false` in the response, so a impatient long-press costs
-  nothing and never surfaces an error. `forced` is the only way to tell
-  a real wake from a downgrade from outside.
+  It costs an API call and nothing else — the car stays asleep. The
+  proxy serves its own copy for `LIVE_REFRESH_MIN_SECONDS` before
+  asking again; the watch's 15 s poll is what drives these. `fresh=1`
+  skips that window for one ordinary read, and is the one read that
+  never becomes a wake, charging or not. The companion sends it once,
+  eight seconds after a remote command: telling the car to stop
+  charging must not be followed by waking it to ask about it.
+- A forced read (`?force=1`, `POST /refresh`) wakes the telematics
+  unit for genuinely current data. There is no floor: every pull-down
+  and long-press on the watch wakes the car, and so does every launch.
+  For a CCS2 car the library triggers the wake, sleeps a fixed 25 s,
+  then reads Kia's snapshot, so a forced read takes about half a
+  minute. The companion's HTTP timeout is 60 s to match — at the 15 s
+  it used to be, the watch reported a timeout on every real force and
+  the fresh numbers only arrived with the next poll. A wake can still
+  overrun 60 s (the library retries the whole thing, sleep included, if
+  Kia rejects the device id), and the proxy finishes and caches the
+  result regardless, so the watch shows a timeout and the next poll
+  shows the data.
+
+What bounds wakes is coalescing rather than a floor. `StatusCache`
+runs at most one wake per vehicle at a time: a request arriving during
+one waits for it and shares its answer, and so does an ordinary read
+arriving during any fetch. A force arriving during an ordinary read is
+the exception — it starts its own fetch and takes the in-flight slot,
+so anything later joins the wake rather than the cheaper read it
+supersedes. Two impatient pulls therefore cost one wake. Because the
+two can be in flight together, the cache keeps whichever result was
+started last rather than whichever landed last, so a slow ordinary
+read cannot overwrite a wake's answer.
+
+The one time the proxy wakes the car without being asked is a charging
+session. While the last-known state says `is_charging`, an ordinary
+read arriving `LIVE_CHARGING_REFRESH_SECONDS` (default 60) after the
+last wake is upgraded to a wake, so the watch's poll shows the charge
+rate and ETA moving without anyone pulling. The charger holds the 12V
+battery up for the whole session, so this is the wake that costs
+least. It switches itself off: the first read showing charging has
+stopped puts the vehicle back on the ordinary window. It is
+client-driven, not a timer — with nobody asking, nothing happens — but
+"nobody" means no client at all, not just no watch: a Home Assistant
+sensor polling the same endpoint drives the wakes too.
+
+The window is paced from the last wake, not from the age of the cached
+entry, because an ordinary read in between rewrites that entry. Pacing
+on entry age meant a deployment with `LIVE_REFRESH_MIN_SECONDS` below
+the charging window never woke the car at all — the exact symptom the
+upgrade exists to fix. What the wrist sees is longer than the window:
+60 s of waiting, plus the ~30 s the wake itself takes, plus up to one
+15 s poll interval, so the numbers move about every minute and a half.
+
+Launch: the watch paints its flash copy, asks for an ordinary status
+(the proxy's copy, back within a second), then answers that reply with
+a forced refresh. Cached numbers at once, the car's own about thirty
+seconds later, the spinner running in between. If that first read was
+itself upgraded to a wake — a charging car, which is the launch most
+likely to matter — the reply says so via `forced`, which the companion
+forwards to the watch, and the watch skips its own wake rather than
+spending another half minute learning nothing. The trigger lives in
+the watchapp rather than the companion because the watchapp restarts
+on every launch and the companion's JS session need not.
+
+`forced` in the response says the proxy asked Kia to wake the car. It
+is not proof the car answered: the library discards the wake trigger's
+response and sleeps a fixed interval, so a car with no signal yields
+the previous snapshot with `forced: true` and no error. The reading's
+own `updated_at` is the honest signal, which is why both watch screens
+carry the age line. The proxy logs a warning when a wake does not
+advance it.
+
+An assumption worth revisiting against the car: that a charging PV5
+does not report to Kia on its own, so a wake is the only way to see
+the rate move. If it turns out to push unprompted, an ordinary read
+would do the same job for a fraction of the cost.
 
 #### Remote commands
 
@@ -191,14 +253,25 @@ deliberately narrow and off by default.
   state". A leaked token must not silently gain unlock; turning
   mutation on is a deliberate operator decision on the proxy side,
   never a default.
-- `COMMAND_MIN_SECONDS` floors the interval between commands. Unlike
-  a downgraded force, a command inside the window is refused with a
-  429 — silently dropping a lock request would be worse than an error.
-- Watch-initiated only. No proxy code path — not the detector, not any
-  timer — ever sends a command on its own; every command traces back
-  to a press or tap on the wrist.
+- `COMMAND_MIN_SECONDS` floors the interval between commands. A
+  command inside the window is refused with a 429 rather than queued —
+  silently dropping a lock request would be worse than an error. The
+  slot is claimed before the command is sent, not stamped after it: a
+  send can sit behind a wake in progress for half a minute, and a gate
+  that only stamped on the way out would let everything that arrived
+  meanwhile through. A send Kia rejects hands the slot back.
+- Watch-initiated only. No proxy code path — no timer, nothing — ever
+  sends a command on its own; every command traces back to a press or
+  tap on the wrist.
 - Risky actions (unlock, stop charge, valet) confirm on the watch
   before the request is sent.
+- A command can be slow to leave the proxy. `LiveDataSource`
+  serialises every upstream call on one lock, and a wake holds it for
+  its whole half minute, so a command tapped during one waits for it —
+  as does a second vehicle's read on a multi-car account, which can
+  then overrun the companion's 60 s timeout. The watch's actions menu
+  tracks its own request rather than the general busy flag, so
+  "Sending…" means this command and not the wake it is queued behind.
 
 ### Kia authentication
 
@@ -215,41 +288,17 @@ deliberately narrow and off by default.
 
 ### Notifications
 
-Notifications are driven from the proxy, not the companion. An
-asyncio background task (`proxy/app/detector.py`) polls each vehicle
-on `DETECTOR_INTERVAL_SECONDS`, diffs against the last observation,
-and pushes to ntfy on meaningful transitions (charge start/end,
-plug/unplug, lock/unlock, climate on/off). The phone runs the ntfy
-client app subscribed to the configured topic, the phone shows the
-standard OS notification, and the Pebble mobile app bridges that OS
-notification to the watch — so pushes reach the wrist whether the
-Kia app is open, closed, or not even installed in the watch locker.
-
-Why this layout rather than Rebble timeline pins or watch-scheduled
-wakeups:
-
-- **Works without the watchapp running.** The OS-notification bridge
-  is Pebble's normal path; we just feed it the right notification via
-  the same mechanism SMS or Slack use.
-- **Phone gets the notification too**, which Rebble timeline pins
-  don't do — useful when the watch isn't on the wrist.
-- **Self-hostable.** ntfy runs in the same compose stack as the
-  proxy, behind the same Caddy. No third-party push service, no
-  per-vendor push keys (APNS/FCM), no risk of a service going away
-  (the feared Pushbullet scenario).
-- **Testable** without Rebble account / OAuth dance.
-
-Deliberate scope limits:
-
-- **Detection resolution equals the poll interval.** A transition that
-  starts and ends inside one interval is missed. For vehicle events
-  this is academic — nothing toggles that fast.
-- **First observation for a vehicle id is silent.** No "charging
-  started" spam when the proxy restarts mid-session.
-- **The transition layer is stateless across restarts.** If the proxy
-  crashes mid-session and comes back up, it re-establishes baseline
-  silently and reports transitions forward from there. Phase 3+ can
-  persist last-known state to sqlite if it matters.
+None, deliberately. Until phase 8 the proxy ran a transition detector
+that pushed charge, plug, lock and climate events through a
+self-hosted ntfy; the phone's ntfy app turned them into OS
+notifications, which the Pebble mobile app bridged to the wrist. It
+was removed because the official Kia app already sends the same events
+as phone notifications, and the Pebble app bridges those exactly as it
+bridged ntfy's — so the second pipeline produced duplicates and an
+extra container to run, and nothing else. A forker without the Kia
+app on their phone can find the detector, the notifier and the compose
+service in the history before phase 8. Don't reintroduce them without
+a reason the Kia app doesn't cover.
 
 ### PebbleKit JS companion (`pebble/src/pkjs/`)
 
@@ -266,7 +315,8 @@ Deliberate scope limits:
   - **Main** — big centred SoC percentage with a charging/idle bolt
     (filled while charging, outline while idle, so the state survives
     the 1-bit platforms), battery bar, range, plug and lock status,
-    last-updated timestamp.
+    last-updated timestamp. Paints the flash copy at launch, then the
+    proxy's, then the car's own (see "Refresh model").
   - **Detail** — scrollable: door/lock state plus a summary of open
     doors, windows, trunk, hood and sunroof, outside temp, 12V SoC,
     AC/DC charge limits, charge rate (kW) and estimated
@@ -341,6 +391,7 @@ Companion → watch (responses):
 | `AUX_BATTERY_PCT`| uint8  | 12V auxiliary battery, 0–100; 0 means not reported   |
 | `IS_CLIMATE_ON` | bool    | Maps to `air_control_is_on` upstream                 |
 | `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
+| `FORCED`        | bool    | The car was woken for this reading. Lets launch skip its own wake, and tells the watch a poll reply is not the wake it awaits |
 | `UNIT_MILES`    | bool    | Clay units toggle; rides every list/status response  |
 | `ACTION`        | string  | `action_ok` response — echoes the command that ran   |
 | `ERROR_MSG`     | string  | Populated on failure; watch surfaces it in the UI    |
@@ -403,9 +454,10 @@ server); the list below reflects the path actually taken.
    `hyundai_kia_connect_api`, SQLite persistence for the refresh token
    and last-known state, a hard floor on car-waking refreshes, and the
    transition detector routed through the shared cache so one interval
-   is one upstream call. PV5 field mappings confirmed against a real
-   payload dump (`proxy/tools/dump_vehicle.py`) rather than guessed —
-   this absorbed what was originally a separate phase 5. **Done.**
+   is one upstream call (the floor and the detector were both removed
+   in phase 8). PV5 field mappings confirmed against a real payload
+   dump (`proxy/tools/dump_vehicle.py`) rather than guessed — this
+   absorbed what was originally a separate phase 5. **Done.**
 4. **Watchapp on emery.** The Pebble Time 2 has a larger display than
    the Pebble Time the UI was laid out for, so geometry is derived from
    runtime layer bounds instead of basalt-sized pixel constants. Emery
@@ -415,8 +467,8 @@ server); the list below reflects the path actually taken.
 5. **Reliability and UX polish.** Last-known state per vehicle persisted
    to watch storage, so launch paints real numbers instead of
    "Connecting…". A 12V auxiliary-battery readout on the detail screen —
-   the one number that shows whether the force-refresh floor is actually
-   protecting the battery. Staleness stays visible alongside errors
+   the one number that shows whether the car-waking reads are costing
+   the battery anything. Staleness stays visible alongside errors
    rather than being replaced by them, on both screens. A single short
    vibration on the OK→error edge, never repeated while the error
    persists. **Done.**
@@ -436,10 +488,11 @@ server); the list below reflects the path actually taken.
    single vehicle instead of a phantom refresh. Launch always shows the
    newest state Kia's servers hold — the companion's first status
    request each session sends `fresh=1`, an ordinary read that skips
-   the proxy's freshness window without waking the car. A Kia-mark menu
-   icon shows in the watch launcher and phone locker, and
-   `pebble/appstore.md` drafts a future store listing, since sideloaded
-   apps cannot ship a description to the phone. **Done.**
+   the proxy's freshness window without waking the car (phase 8 went
+   further and wakes the car at launch). A Kia-mark menu icon shows in
+   the watch launcher and phone locker, and `pebble/appstore.md` drafts
+   a future store listing, since sideloaded apps cannot ship a
+   description to the phone. **Done.**
 
 7. **Remote commands and detail depth.** An actions menu — Select or
    swipe left on the detail screen — sends the ten remote commands
@@ -453,20 +506,48 @@ server); the list below reflects the path actually taken.
    spinner main already had. The main screen's SoC is centred.
    **Done.**
 
-All seven planned phases are complete.
+8. **Refresh model rework; notifications removed.** The owner found
+   the 12V-protecting floor misguided in practice: the official app
+   shows the charge rate moving while charging, and the watch could
+   not, because even a hard refresh inside the window came back
+   cached. The floor went. Every pull-down, long-press and launch
+   wakes the car; concurrent requests share one wake instead of
+   causing two; and while the car is charging the watch's ordinary
+   poll becomes a wake once a minute, dropping back to manual once a
+   read shows charging has stopped. Launch paints the proxy's copy and
+   then the car's own. The companion's HTTP timeout grew from 15 s to
+   60 s to cover the half-minute a CCS2 wake takes — at 15 s the watch
+   had been reporting a timeout on every real force. The ntfy
+   detector, its notifier and its compose service were removed: the
+   official Kia app's notifications reach the watch by the same
+   bridge. **Done.**
+
+All eight phases are complete.
 
 ## Risks and open questions
 
-- **Kia ToS.** Unofficial API use is not sanctioned. Risk of account lockout,
-  especially with aggressive polling. Mitigation: default cache ≥ 10 min,
-  user-triggered refresh only, exponential backoff on errors. Smartcar is a
-  licensed fallback if this becomes untenable, but its data set is narrower
-  and it's paid.
-- **12V battery drain.** Only *forced* pulls wake the telematics unit.
-  `LIVE_FORCE_MIN_SECONDS` bounds them per vehicle, the detector never
-  forces, and ordinary reads take Kia's server-side state. The failure
-  mode to watch for is a client that forces on a timer — nothing does
-  today, and nothing should.
+- **Kia ToS.** Unofficial API use is not sanctioned. Risk of account
+  lockout, especially with aggressive polling. Mitigation: every read
+  is client-driven (launch, a pull, the 15 s poll while the app is
+  open), and the proxy's copy answers the poll for ten minutes at a
+  time, so an idle day is a handful of calls. The exception is a
+  charging session being polled, which wakes the car roughly every
+  minute and a half for as long as some client keeps asking. Each wake
+  is five Kia calls and each ordinary read four, so an hour of watching
+  a charge is a couple of hundred calls. Smartcar is a licensed
+  fallback if this becomes untenable, but its data set is narrower and
+  it's paid.
+- **12V battery drain.** Every forced read wakes the telematics unit
+  and draws on the 12V battery. The original design floored wakes at
+  15 minutes; phase 8 removed the floor, because the owner only looks
+  at the watch when a current reading is wanted and the official app
+  wakes the car just as freely. What remains: wakes are user-driven or
+  happen while the charger is holding the 12V up anyway, concurrent
+  requests share one wake, and nothing wakes on a timer. The failure
+  mode to watch for is a second client polling `/status` around the
+  clock, which would extend the charging upgrade to sessions nobody is
+  looking at. The 12V percentage on the detail screen is the reading to
+  check if any of this ever looks wrong.
 - **PV5 payload shape.** The PV5 is new enough that the community library
   may not normalise every field. `proxy/tools/dump_vehicle.py` dumps the
   real payload (VIN and coordinates redacted) so a mapping can be checked

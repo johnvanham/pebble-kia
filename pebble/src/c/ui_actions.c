@@ -56,7 +56,11 @@ static void status_update(Layer *layer, GContext *ctx) {
   graphics_fill_rect(ctx, b, 0, GCornerNone);
   const char *error = app_state_error();
   const char *text = NULL;
-  if (app_state_is_busy()) text = "Sending...";
+  // The action's own flag, not the general busy one: a launch wake or a
+  // pull-down holds that for about half a minute, which would put
+  // "Sending..." under a menu from which nothing has been sent, and
+  // then blank the line when the wake's reply arrived mid-command.
+  if (app_state_action_pending()) text = "Sending...";
   else if (error) text = error;
   else if (app_state_action_ok()) text = "Sent";
   if (!text) return;

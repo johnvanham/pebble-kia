@@ -110,6 +110,13 @@ void app_state_set_busy(bool busy);
 bool app_state_action_ok(void);
 void app_state_set_action_ok(bool ok);
 
+// Whether a command this watch sent is still in flight. Separate from
+// the general busy flag, which a launch wake or a pull holds for half a
+// minute — long enough that the actions menu would otherwise say
+// "Sending..." about a command nobody has sent yet.
+bool app_state_action_pending(void);
+void app_state_set_action_pending(bool pending);
+
 typedef void (*AppStateListener)(void);
 void app_state_subscribe(AppStateListener listener);
 void app_state_notify(void);

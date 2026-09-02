@@ -15,9 +15,6 @@ def _demo_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMO_DATA_FILE", str(PROXY_DIR / "demo-data.json"))
     monkeypatch.setenv("PROXY_STATE_DB", str(tmp_path / "state.db"))
     monkeypatch.setenv("DEMO_REFRESH_MIN_SECONDS", "300")
-    monkeypatch.setenv("DETECTOR_INTERVAL_SECONDS", "3600")
-    monkeypatch.delenv("NTFY_URL", raising=False)
-    monkeypatch.delenv("NTFY_TOPIC", raising=False)
 
 
 @pytest.fixture

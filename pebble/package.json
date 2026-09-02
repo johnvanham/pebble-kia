@@ -55,7 +55,8 @@
       "SUNROOF_OPEN",
       "EFF_KMPKWH_X10",
       "BATT_TEMP_C",
-      "ACTION"
+      "ACTION",
+      "FORCED"
     ],
     "resources": {
       "media": [

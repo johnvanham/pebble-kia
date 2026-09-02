@@ -23,7 +23,7 @@ from hyundai_kia_connect_api.utils import get_child_value
 
 from ..config import Settings
 from ..models import PlugState, Vehicle, VehicleStatus
-from ..store import StateStore
+from ..store import TOKEN_SECRET_KEYS, StateStore
 from .base import VehicleNotFound
 
 log = logging.getLogger(__name__)
@@ -241,6 +241,10 @@ class LiveDataSource:
         self._lock = threading.RLock()
         self._vm: VehicleManager | None = None
         self._token_from_store = False
+        # What was last written to the store, minus the secrets the
+        # store strips, so a change can be noticed by value — see
+        # _persist_token.
+        self._saved_token: dict | None = None
 
     def list_vehicles(self) -> list[Vehicle]:
         with self._lock:
@@ -256,10 +260,26 @@ class LiveDataSource:
             if vehicle_id not in vm.vehicles:
                 raise VehicleNotFound(vehicle_id)
             if force:
-                # Wakes the car. Rate-limited upstream in cache.py.
+                # Wakes the car. For a CCS2 car the library triggers the
+                # wake, sleeps a fixed 25 s, then reads Kia's snapshot —
+                # so this holds the lock for that long, and cache.py
+                # coalesces anything that arrives meanwhile.
+                before = vm.vehicles[vehicle_id].last_updated_at
                 vm.force_refresh_vehicle_state(vehicle_id)
+                after = vm.vehicles[vehicle_id].last_updated_at
+                if after == before:
+                    # The library discards the wake trigger's response
+                    # and sleeps a fixed interval, so a car that never
+                    # answered is indistinguishable from a successful
+                    # wake except by its report time not moving. The
+                    # watch shows that age, but say so in the log too.
+                    log.warning(
+                        "forced refresh did not advance the vehicle's report "
+                        "time; the car may not have answered"
+                    )
             else:
                 vm.update_vehicle_with_cached_state(vehicle_id)
+            self._persist_token(vm)
             return map_status(vm.vehicles[vehicle_id])
 
     def perform_action(self, vehicle_id: str, action: str) -> None:
@@ -275,6 +295,7 @@ class LiveDataSource:
                     vehicle_id,
                     ClimateRequestOptions(set_temp=21.0, duration=10),
                 )
+                self._persist_token(vm)
                 return
             method = {
                 "lock": vm.lock,
@@ -290,6 +311,7 @@ class LiveDataSource:
             if method is None:
                 raise ValueError(f"unknown action: {action}")
             method(vehicle_id)
+            self._persist_token(vm)
 
     def _manager(self) -> VehicleManager:
         if self._vm is None:
@@ -325,13 +347,28 @@ class LiveDataSource:
     def _refresh_token(self, vm: VehicleManager) -> None:
         # check_and_refresh_token() logs in when there is no token, refreshes
         # an expired one, and populates vm.vehicles in either case — so it is
-        # the only call needed before an update. It swaps in a new Token
-        # object whenever anything changed, which is the cue to persist.
-        before = vm.token
+        # the only call needed before an update.
         vm.check_and_refresh_token()
-        if vm.token is not before:
-            self._store.save_token(vm.token.to_dict())
-            self._token_from_store = True
+        self._persist_token(vm)
+
+    def _persist_token(self, vm: VehicleManager) -> None:
+        """Write the token whenever its contents changed.
+
+        Comparing by identity is not enough: the library swaps in a new
+        Token on a refresh but also mutates the existing one in place —
+        `_retry_on_device_id_error` rewrites `device_id` after Kia
+        invalidates it, and a device id that never reaches disk costs
+        every restart another rejected call and retry.
+        """
+        if vm.token is None:
+            return
+        current = vm.token.to_dict()
+        snapshot = {k: v for k, v in current.items() if k not in TOKEN_SECRET_KEYS}
+        if snapshot == self._saved_token:
+            return
+        self._store.save_token(current)
+        self._saved_token = snapshot
+        self._token_from_store = True
 
     def _stored_token(self) -> Token | None:
         stored = self._store.load_token()

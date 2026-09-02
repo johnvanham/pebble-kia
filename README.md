@@ -14,16 +14,15 @@ as a hosted service.
 | ---------------------- | ---------------------------------------------------------- |
 | Pebble watchapp (C)    | Emery-first layout, touch + button controls, actions menu, launcher icon, instant boot |
 | PebbleKit JS companion | Clay config page (proxy URL, token, miles/km toggle)       |
-| Self-hosted proxy      | FastAPI, `demo` + `live` sources, cache + rate limit, opt-in remote commands |
+| Self-hosted proxy      | FastAPI, `demo` + `live` sources, coalescing cache, charging-aware refresh, opt-in remote commands |
 | Scenario engine        | Time-evolving demos under `proxy/scenarios/`               |
-| Push notifications     | Proxy detector → ntfy (self-hosted) → phone/watch          |
 | Live Kia integration   | Real Kia Connect data; SQLite-persisted token and state    |
 | HA / dashboard clients | Future                                                     |
 
 The setup guide below runs against a real Kia Connect account. No Kia
 login? Everything also runs end to end against bundled demo data —
-scenarios replay charge curves, lock cycles and climate events, pushes
-and all, with no car and no physical watch. See [Demo mode](#demo-mode).
+scenarios replay charge curves, lock cycles and climate events, with no
+car and no physical watch. See [Demo mode](#demo-mode).
 
 The layout is tuned for the Pebble Time 2 (`emery`), the only target
 with a touchscreen; basalt, diorite and chalk also build.
@@ -118,14 +117,19 @@ before the container ever sees it. The refresh token is cached in
 SQLite (`PROXY_STATE_DB`) so restarts don't re-login; the password is
 never written there.
 
-Two rate limits apply, and they are not the same thing.
-`LIVE_REFRESH_MIN_SECONDS` (600) bounds ordinary reads, which take the
-state Kia already holds and leave the car asleep — launching the
-watchapp does one of these with `fresh=1` to skip the cache window, but
-it never wakes the car. `LIVE_FORCE_MIN_SECONDS` (900) bounds force
-refreshes (long-press Select, or drag down on a Pebble Time 2), which
-wake the car and draw on its 12V battery. A force inside that window
-quietly returns cached data with `forced: false` rather than an error.
+Two kinds of read reach Kia, and they cost different things. An
+ordinary read takes the state Kia already holds and leaves the car
+asleep; the proxy serves its own copy of that for
+`LIVE_REFRESH_MIN_SECONDS` (600) before asking again. A forced read
+wakes the car for a current reading — the watch does one at launch and
+on every long-press Select or drag-down — and takes about thirty
+seconds on a CCS2 car, because the Kia library waits for the car to
+report. There is no floor on forced reads; two arriving together share
+one wake. While the car is charging, an ordinary poll landing
+`LIVE_CHARGING_REFRESH_SECONDS` (60) after the last wake becomes a wake
+itself, so the charge rate and ETA keep moving on their own; add the
+wake's own half minute and the numbers change about every minute and a
+half. It stops as soon as a read shows the session over.
 
 **Decide whether to enable remote commands.** The watch has an actions
 menu (lock/unlock, charging, climate, charge port, valet), but the
@@ -142,27 +146,17 @@ ENABLE_COMMANDS=1
 `COMMAND_MIN_SECONDS` (default 10) spaces commands apart; one sent
 inside the window is rejected with a 429 rather than queued.
 
-**Pick a push topic** — any guess-hard string (the topic name is the
-only access control on a default ntfy install). Add to `.env`:
-
-```
-NTFY_TOPIC=kia-<something-random-here>
-NTFY_PUBLIC_URL=https://ntfy.example.com
-```
-
 **Run it** (still inside `pebble-kia/proxy`):
 
 ```sh
 docker compose up -d --build        # or: podman compose up -d --build
 docker logs -f pebble-kia-proxy     # sanity-check startup, Ctrl-C to detach
-docker logs -f pebble-kia-ntfy      # ntfy server in a second shell
 ```
 
-The compose file brings up two services — the proxy on
-`127.0.0.1:8000` and ntfy on `127.0.0.1:2586`. Both are loopback-only;
-Caddy fronts both subdomains, so nothing is exposed to the public
-internet directly. Swap the binds for `0.0.0.0` only if you plan to
-skip the reverse proxy.
+The compose file brings up one service, the proxy on `127.0.0.1:8000`.
+It is loopback-only; Caddy fronts it, so nothing is exposed to the
+public internet directly. Swap the bind for `0.0.0.0` only if you plan
+to skip the reverse proxy.
 
 **Sanity check** — from the host itself (still in `pebble-kia/proxy`):
 
@@ -178,7 +172,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/vehicles | jq .
 error here is a credentials problem — see
 [Troubleshooting](#troubleshooting) before blaming anything else.
 
-**Add TLS via Caddy** — drop these blocks into the Caddy config
+**Add TLS via Caddy** — drop this block into the Caddy config
 (see `proxy/Caddyfile.example`) and point DNS at the server:
 
 ```
@@ -186,24 +180,15 @@ kia-proxy.example.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8000
 }
-
-ntfy.example.com {
-    reverse_proxy 127.0.0.1:2586 {
-        flush_interval -1
-    }
-}
 ```
 
-`caddy reload` and Caddy obtains Let's Encrypt certs automatically.
-The phone will subscribe to `https://ntfy.example.com/<your-topic>`
-for push notifications; the watchapp will call
-`https://kia-proxy.example.com` for data.
+`caddy reload` and Caddy obtains a Let's Encrypt cert automatically.
+The watchapp will call `https://kia-proxy.example.com` for data.
 
-**Subscribe the phone to ntfy** — install the ntfy app
-(<https://ntfy.sh/> has App Store / Play Store links), then add a
-subscription with the URL above. Phone OS notifications from the ntfy
-app bridge to the watch automatically via the Pebble mobile app's
-notification forwarding; no watchapp-side setup needed.
+Notifications (charging started, charge complete, locked, and so on)
+are not the proxy's job: the official Kia app already sends them to
+the phone, and the Pebble mobile app bridges phone notifications to
+the watch. Keep the Kia app installed and its notifications on.
 
 **Write the setup QR codes** — the bearer token is 64 hex characters
 and typing it on a phone keyboard is awful. On startup the proxy writes
@@ -372,9 +357,9 @@ certificate will fail opaquely inside the WebView.
 ### 4. Verify
 
 1. Launch Kia on the watch. It should show vehicle data rather than `ERR`
-   in the top-right. Launch always pulls the newest state Kia's servers
-   hold (the first status request sends `fresh=1`), so the numbers
-   should match the official app.
+   in the top-right. Launch shows the proxy's copy within a second and
+   then wakes the car; the spinner runs for about thirty seconds and
+   the numbers should then match the official app.
 2. Tail logs over whichever transport you installed with —
    `pebble logs --adb`, `--phone <ip>`, or `--cloudpebble`. Both the
    watch's `APP_LOG` output and the companion's `[kia] req …` lines come
@@ -386,19 +371,24 @@ certificate will fail opaquely inside the WebView.
 
 ## Controls
 
-Opening the app always pulls the latest state Kia's servers hold: the
-companion's first status request each session sends `fresh=1`, which
-tells the proxy to skip its `LIVE_REFRESH_MIN_SECONDS` cache window for
-that one ordinary read. Launch never wakes the car — only a force
-refresh does that.
+Opening the app shows what the watch remembered, then what the proxy
+holds, then asks the car itself: the first status reply each launch is
+answered with a forced refresh, which wakes the car and takes about
+thirty seconds. If that first reply already came from the car — the
+proxy wakes a charging vehicle of its own accord — the watch skips its
+own wake instead of spending another half minute on it. While the app
+is open the companion polls the proxy every 15 seconds; that only
+reaches Kia every `LIVE_REFRESH_MIN_SECONDS`, except while the car is
+charging, when the proxy turns the poll into a wake and the readings
+move about every minute and a half until the session ends.
 
 ### Touch (Pebble Time 2 / emery)
 
 The Pebble Time 2 is the only target with a touchscreen.
 
-- **Drag down** (main or detail) — force refresh: wakes the car, same
-  as long-press Select, and subject to the same
-  `LIVE_FORCE_MIN_SECONDS` downgrade window.
+- **Drag down** (main or detail) — refresh from the car: wakes it, same
+  as long-press Select. Every pull wakes; two pulls inside one wake
+  share it.
 - **Swipe left** (main screen) — open the detail screen.
 - **Swipe left** (detail screen) — open the actions menu.
 - **Swipe right** (detail screen) — back to the main screen.
@@ -418,8 +408,9 @@ The only controls on basalt, diorite and chalk.
   detail screen they scroll.
 - **Select** — on the main screen, open the detail screen; on the
   detail screen, open the actions menu.
-- **Select (long press, ≥500ms)** — force refresh the current vehicle,
-  with a short vibration.
+- **Select (long press, ≥500ms)** — refresh the current vehicle from
+  the car, with a short vibration. Takes about thirty seconds; the
+  spinner runs meanwhile.
 - **Back** — return to the previous screen or exit the app.
 
 The detail screen scrolls: door/lock state with a count of anything
@@ -513,15 +504,12 @@ hand-edited file stays fresh no matter when it was last saved.
 ```sh
 # stop the static proxy, then re-run pointing at a scenario
 DEMO_DATA_FILE=scenarios/pv5-rapid-charge.json uv run uvicorn app.main:app --port 8000
-
-# watch proxy-side push detection fire (no phone app needed — pushes
-# go to a NullNotifier when NTFY_TOPIC is unset, just logged)
-#   [INFO] notifier: would notify: PV5: Plugged in — DC
-#   [INFO] notifier: would notify: PV5: Charging — 180.0 kW • ETA 28 min
 ```
 
-Pointing at real ntfy is the same command plus `NTFY_URL` and
-`NTFY_TOPIC`. See `proxy/README.md` → "Notifications".
+The watch's 15-second poll picks the progression up as it happens —
+plug-in, the charge curve tapering, unplug, climate, lock — since the
+demo cache window is only five seconds. See `proxy/README.md` →
+"Scenario mode" for the file format and the shipped scenarios.
 
 Touch gestures can be exercised in the emery emulator too: from
 `pebble/`, start it with `pebble install --emulator emery --vnc` and
@@ -541,10 +529,17 @@ see [Controls](#controls).
 ```sh
 cd proxy
 git pull
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
 ```
 
 Clients re-fetch on the next request; no watch-side restart needed.
+
+Coming from a version before the notification pipeline was removed?
+`--remove-orphans` stops the old `pebble-kia-ntfy` container, but two
+leftovers need a hand: delete the `ntfy.example.com` block from your
+Caddyfile (Caddy keeps renewing a certificate for it and answers 502
+otherwise), and drop the volume with
+`docker volume rm proxy_ntfy-data` once you no longer want its cache.
 
 ## Troubleshooting
 
@@ -568,12 +563,17 @@ Clients re-fetch on the next request; no watch-side restart needed.
   credentials work everywhere and still fail, Kia has probably changed
   its login flow — try `uv sync --upgrade-package hyundai-kia-connect-api`.
 - **Watch shows `Kia is rate limiting this account`** — too many calls
-  against the account. Back off; the intervals in `.env` exist to
-  prevent this.
-- **A force refresh (long-press or drag-down) seems to do nothing** —
-  check `forced` in the response. `false` means you were inside
-  `LIVE_FORCE_MIN_SECONDS` and got cached data on purpose, which is the
-  intended behaviour rather than a fault.
+  against the account. Back off. Every pull wakes the car and a
+  charging session being watched wakes it about every minute and a
+  half; raising `LIVE_CHARGING_REFRESH_SECONDS` in `.env` is the lever
+  if this recurs.
+- **A refresh (long-press or drag-down) takes ages** — that is what a
+  wake costs: the Kia library triggers it, waits about 25 seconds, then
+  reads the result. The spinner runs the whole time. `Proxy timed out`
+  after a full minute means the wake outlasted the companion's
+  patience, usually a library retry or a second vehicle's wake ahead of
+  it in the queue. The proxy finishes anyway, so the fresh numbers
+  arrive with the next poll.
 - **Watch shows `Commands disabled`** — the actions endpoint is off,
   which is the shipped default. Set `ENABLE_COMMANDS=1` in `proxy/.env`
   and restart the proxy.
@@ -583,10 +583,13 @@ Clients re-fetch on the next request; no watch-side restart needed.
   accepted takes the car a few seconds to act on; the app re-reads
   state automatically shortly after, so give the display a moment to
   catch up before retrying.
-- **Data looks stale right after launch** — launch already skips the
-  proxy's cache window (`fresh=1`), so what you see is the newest state
-  Kia's servers hold. A parked car reports infrequently; drag down or
-  long-press Select to wake it for a truly current reading.
+- **Data looks stale right after launch** — the first thing on screen
+  is the watch's own last copy, then the proxy's; the car's answer
+  lands about thirty seconds in, once the launch wake completes. If the
+  age line still doesn't move, the car never answered the wake — no
+  signal, or parked somewhere without any. That is not reported as an
+  error, because Kia's API doesn't report it either; the proxy log
+  carries a warning and the age line is the honest reading.
 - **A field reads wrong or empty on the watch** — run
   `uv run python tools/dump_vehicle.py` in `proxy/` and compare the
   real payload against the mapping in `app/sources/live.py`. The dump
@@ -598,13 +601,10 @@ Clients re-fetch on the next request; no watch-side restart needed.
 - **`pebble install --phone` fails** — developer connection is
   disabled or the watch IP is wrong. Re-check Settings → Developer in
   the mobile app.
-- **No push notifications arriving** — subscribe to the topic from any
-  host first with `curl -sN https://ntfy.example.com/your-topic/json`
-  and trigger a transition (edit the scenario's `at_s` offsets or
-  force-refresh). If that works but the phone app doesn't buzz,
-  check the ntfy app's subscription URL and the phone's OS
-  notification permissions. If the proxy logs "would notify" without
-  trying the HTTP push, `NTFY_TOPIC` is unset — push is disabled.
+- **No charging or lock notifications on the watch** — those come
+  from the official Kia app, not from this project. Check the Kia
+  app's notification settings on the phone and that the Pebble app is
+  allowed to forward that app's notifications.
 
 ## What's next
 
@@ -619,14 +619,19 @@ The phased plan lives in `DESIGN.md`. Short version:
 5. UX polish — last-known state persisted to watch storage, 12V
    battery readout, staleness visible alongside errors, vibrate on the
    OK→error edge ← **done**
-6. Touch controls on emery, always-fresh launch reads, launcher icon
-   and store-listing prep ← **done**
+6. Touch controls on emery, always-fresh launch reads (superseded by
+   the launch wake in phase 8), launcher icon and store-listing prep
+   ← **done**
 7. Opt-in remote commands (`ENABLE_COMMANDS`) with a watch actions
    menu and confirm steps, plus a scrollable detail screen with charge
    limits, a summary of anything open, efficiency and battery
    temperature ← **done**
+8. Refresh model rework — every pull and launch wakes the car, wakes
+   coalesce, charging sessions refresh on their own — and the ntfy
+   notification pipeline removed in favour of the Kia app's own
+   ← **done**
 
-All seven planned phases are complete.
+All eight phases are complete.
 
 ## For forkers
 

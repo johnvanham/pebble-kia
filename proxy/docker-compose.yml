@@ -4,8 +4,6 @@ services:
     image: pebble-kia-proxy:dev
     container_name: pebble-kia-proxy
     restart: unless-stopped
-    depends_on:
-      - ntfy
     # Handed to the container verbatim. Listing each variable under
     # `environment:` instead would run every value through compose's
     # ${...} interpolation first, which silently eats a '$' in a Kia
@@ -19,9 +17,6 @@ services:
       - DEMO_DATA_FILE=/app/demo-data.json
       - PROXY_STATE_DB=/app/state/state.db
       - SETUP_QR_DIR=/app/setup
-      # Proxy reaches ntfy over the compose network. External clients
-      # (phone subscribers) go through Caddy at NTFY_PUBLIC_URL.
-      - NTFY_URL=${NTFY_URL:-http://ntfy:80}
     volumes:
       # Bind-mount the demo JSON so edits on the host are picked up by the
       # next forced refresh without a container rebuild.
@@ -41,25 +36,5 @@ services:
       # bearer token then crosses the network in clear text.
       - "${PROXY_BIND:-127.0.0.1}:8000:8000"
 
-  ntfy:
-    image: binwiederhier/ntfy:latest
-    container_name: pebble-kia-ntfy
-    command: serve
-    restart: unless-stopped
-    environment:
-      - NTFY_BASE_URL=${NTFY_PUBLIC_URL:-http://localhost:2586}
-      - NTFY_LISTEN_HTTP=:80
-      - NTFY_CACHE_FILE=/var/lib/ntfy/cache.db
-      - NTFY_BEHIND_PROXY=true
-      - NTFY_ATTACHMENT_CACHE_DIR=/var/lib/ntfy/attachments
-    volumes:
-      - ntfy-data:/var/lib/ntfy
-    ports:
-      # Loopback only — expose via Caddy to the internet so Let's
-      # Encrypt can cover TLS and the phone can subscribe from outside
-      # the LAN. See Caddyfile.example.
-      - "127.0.0.1:2586:80"
-
 volumes:
-  ntfy-data:
   proxy-state:

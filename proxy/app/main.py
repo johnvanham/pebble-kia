@@ -19,10 +19,8 @@ from hyundai_kia_connect_api.exceptions import (
 
 from .auth import verify_bearer
 from .cache import CommandThrottle, StatusCache
-from .config import Settings, configure_logging, detector_interval, load_settings
-from .detector import TransitionDetector
+from .config import Settings, configure_logging, load_settings
 from .models import ActionResponse, StatusResponse, VehicleList, VehicleStatus
-from .notifier import Notifier, NtfyNotifier, NullNotifier
 from .sources.base import ACTIONS, DataSource, VehicleNotFound
 from .sources.demo import DemoDataSource
 from .sources.live import LiveDataSource
@@ -40,14 +38,15 @@ def _build_source(settings: Settings, store: StateStore) -> DataSource:
     raise RuntimeError(f"unknown DATA_SOURCE: {settings.data_source}")
 
 
-def _build_notifier(settings: Settings) -> Notifier:
-    if settings.ntfy_url and settings.ntfy_topic:
-        return NtfyNotifier(
-            settings.ntfy_url,
-            settings.ntfy_topic,
-            auth_token=settings.ntfy_auth_token or None,
-        )
-    return NullNotifier()
+def _build_cache(settings: Settings, store: StateStore) -> StatusCache:
+    live = settings.data_source == "live"
+    return StatusCache(
+        settings.live_refresh_min_seconds if live else settings.demo_refresh_min_seconds,
+        # Only live has a car to wake — the demo's short TTL already
+        # keeps a charging scenario moving.
+        charging_refresh_seconds=settings.live_charging_refresh_seconds if live else 0,
+        on_store=store.save_status,
+    )
 
 
 @asynccontextmanager
@@ -55,51 +54,16 @@ async def lifespan(app: FastAPI):
     settings = load_settings()
     app.state.settings = settings
     # uvicorn only configures its own loggers, so without this the app's
-    # own info-level output (detector transitions, setup QR) is dropped.
+    # own info-level output (setup QR, missing-field warnings) is dropped.
     configure_logging(settings)
     emit_setup_qr(settings)
     app.state.store = store = StateStore(settings.state_db)
-    app.state.source = source = _build_source(settings, store)
+    app.state.source = _build_source(settings, store)
 
-    live = settings.data_source == "live"
-    app.state.cache = cache = StatusCache(
-        settings.live_refresh_min_seconds if live else settings.demo_refresh_min_seconds,
-        # Only live has a car to wake — on demo a forced refresh is free.
-        force_min_interval_seconds=settings.live_force_min_seconds if live else 0,
-        on_store=store.save_status,
-    )
+    app.state.cache = cache = _build_cache(settings, store)
     cache.warm(store.load_statuses())
     app.state.command_throttle = CommandThrottle(settings.command_min_seconds)
-    app.state.notifier = _build_notifier(settings)
-
-    # Kick off the transition detector against whatever vehicles the
-    # source currently knows about. If list_vehicles() raises (e.g. Kia
-    # is unreachable at boot), we skip detection rather than refuse to
-    # start — the HTTP API still serves clients.
-    detector: TransitionDetector | None = None
-    try:
-        vehicles = source.list_vehicles()
-        nicknames = {v.id: v.nickname for v in vehicles}
-        detector = TransitionDetector(
-            fetch_status=_cached_status,
-            notifier=app.state.notifier,
-            vehicle_nicknames=nicknames,
-            interval_seconds=detector_interval(settings),
-        )
-        detector.start()
-    except Exception:
-        log.warning(
-            "transition detector not started (source.list_vehicles failed)",
-            exc_info=True,
-        )
-    app.state.detector = detector
-
-    try:
-        yield
-    finally:
-        if detector is not None:
-            await detector.stop()
-        await app.state.notifier.close()
+    yield
 
 
 app = FastAPI(title="pebble-kia-proxy", version="0.1.0", lifespan=lifespan)
@@ -165,7 +129,7 @@ def refresh_status(vehicle_id: str):
 # Remote commands mutate the vehicle, so they are opt-in
 # (ENABLE_COMMANDS) and endpoint-only: nothing in this codebase may
 # fire an action except this handler serving an explicit client
-# request. No timer, no detector hook, ever.
+# request. No timer, ever.
 @app.post("/vehicles/{vehicle_id}/actions/{action}",
           response_model=ActionResponse,
           dependencies=[Depends(verify_bearer)])
@@ -182,7 +146,11 @@ def perform_action(vehicle_id: str, action: str):
             detail=f"unknown action: {action} (valid: {', '.join(ACTIONS)})",
         )
     throttle: CommandThrottle = app.state.command_throttle
-    wait = throttle.seconds_until_allowed(vehicle_id)
+    # Reserved before the send, not stamped after it: perform_action can
+    # sit behind a wake already in progress for tens of seconds, and a
+    # gate that only stamps on the way out would let every command that
+    # arrives meanwhile through.
+    wait, previous = throttle.reserve(vehicle_id)
     if wait > 0:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -191,29 +159,16 @@ def perform_action(vehicle_id: str, action: str):
     try:
         app.state.source.perform_action(vehicle_id, action)
     except VehicleNotFound:
+        throttle.restore(vehicle_id, previous)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"vehicle not found: {vehicle_id}",
         )
-    # Stamped on success only, like the force floor, so a send Kia
-    # rejected doesn't lock out the retry.
-    throttle.stamp(vehicle_id)
+    except Exception:
+        # A send Kia rejected must not lock out the retry.
+        throttle.restore(vehicle_id, previous)
+        raise
     return ActionResponse(id=vehicle_id, action=action)
-
-
-def _cached_status(vehicle_id: str) -> VehicleStatus:
-    """Non-forced read for the detector, sharing the cache with clients.
-
-    Going through the cache is what keeps one detector interval to one
-    upstream call per vehicle instead of one per poller.
-    """
-    source: DataSource = app.state.source
-    status_obj, _, _, _ = app.state.cache.get_or_fetch(
-        vehicle_id,
-        lambda effective_force: source.fetch_status(vehicle_id, force=effective_force),
-        force=False,
-    )
-    return status_obj
 
 
 def _status(vehicle_id: str, force: bool, fresh: bool = False) -> StatusResponse:
@@ -229,9 +184,7 @@ def _status(vehicle_id: str, force: bool, fresh: bool = False) -> StatusResponse
                 detail=f"vehicle not found: {vehicle_id}",
             )
 
-    # force wins over fresh: the cache drops bypass_fresh the moment
-    # force enters, so a force=1&fresh=1 request keeps the downgrade
-    # semantics.
+    # force wins over fresh: a wake is already the freshest read there is.
     status_obj, wall_fetched, from_cache, forced = cache.get_or_fetch(
         vehicle_id, do_fetch, force=force, bypass_fresh=fresh
     )

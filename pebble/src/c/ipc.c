@@ -4,7 +4,40 @@
 
 #include "app_state.h"
 
-static void send_request(const char *kind, const char *id,
+// Launch paints what the watch remembered, then what the proxy holds,
+// then asks the car itself: the first status reply of this run is
+// answered with a forced refresh. The flag lives here and not in the
+// companion because the watchapp restarts on every launch while the
+// companion's JS session can outlive it (it does in the emulator). An
+// error reply leaves it armed, so a launch through a connectivity blip
+// still gets its wake once a status does come through.
+static bool s_launch_refresh_pending;
+
+// Whether a wake this watch asked for is still outstanding. A wake
+// takes about half a minute, the companion keeps polling meanwhile, and
+// every reply used to clear the busy flag — so the spinner vanished
+// seconds into a pull and the pull looked like it had done nothing.
+static bool s_awaiting_forced;
+static AppTimer *s_forced_timer;
+// Just past the companion's own 60s HTTP timeout: a reply that never
+// arrives at all must not leave the spinner turning forever.
+#define FORCED_WAIT_MS 65000
+
+static void forced_wait_expired(void *ctx) {
+  s_forced_timer = NULL;
+  s_awaiting_forced = false;
+  app_state_set_busy(false);
+}
+
+static void clear_forced_wait(void) {
+  if (s_forced_timer) {
+    app_timer_cancel(s_forced_timer);
+    s_forced_timer = NULL;
+  }
+  s_awaiting_forced = false;
+}
+
+static bool send_request(const char *kind, const char *id,
                          const char *action) {
   // Clear any previous error optimistically — if this send (or the reply)
   // fails, the error will be re-set. Without this, a stale error hides
@@ -16,7 +49,7 @@ static void send_request(const char *kind, const char *id,
   if (r != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "outbox_begin failed: %d", (int)r);
     app_state_set_error("Phone link busy");
-    return;
+    return false;
   }
   dict_write_cstring(out, MESSAGE_KEY_REQ_KIND, kind);
   if (id != NULL) dict_write_cstring(out, MESSAGE_KEY_REQ_ID, id);
@@ -25,9 +58,10 @@ static void send_request(const char *kind, const char *id,
   if (r != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "outbox_send failed: %d", (int)r);
     app_state_set_error("Phone link busy");
-    return;
+    return false;
   }
   app_state_set_busy(true);
+  return true;
 }
 
 void ipc_request_list(void) {
@@ -36,13 +70,29 @@ void ipc_request_list(void) {
 
 void ipc_request_status(const char *id, bool force) {
   if (id == NULL || id[0] == 0) return;
-  send_request(force ? "refresh" : "status", id, NULL);
+  if (force) {
+    // A pull discharges the launch obligation: the wake it starts is
+    // the one the launch wanted, and leaving both armed would answer
+    // this wake's own reply with a second wake.
+    s_launch_refresh_pending = false;
+  }
+  if (!send_request(force ? "refresh" : "status", id, NULL)) return;
+  if (force) {
+    s_awaiting_forced = true;
+    if (s_forced_timer) {
+      app_timer_reschedule(s_forced_timer, FORCED_WAIT_MS);
+    } else {
+      s_forced_timer =
+          app_timer_register(FORCED_WAIT_MS, forced_wait_expired, NULL);
+    }
+  }
 }
 
 void ipc_request_action(const char *id, const char *action) {
   if (id == NULL || id[0] == 0) return;
   app_state_set_action_ok(false);
-  send_request("action", id, action);
+  app_state_set_action_pending(true);
+  if (!send_request("action", id, action)) app_state_set_action_pending(false);
 }
 
 // The outbox carries one message at a time, so a vehicle picked while a
@@ -87,12 +137,13 @@ static void handle_list(DictionaryIterator *in) {
   app_state_apply_vehicle_list(ids, nicks, count);
 
   // Ask even when the vehicle already carries status: at launch that
-  // status came out of flash and is stale, and the companion's poll
-  // loop only starts once it has been told which vehicle is current.
+  // status came out of flash and is stale, the companion's poll loop
+  // only starts once it has been told which vehicle is current, and
+  // the reply is what triggers the launch wake (see handle_status).
   ipc_request_current_status();
 }
 
-static void handle_status(DictionaryIterator *in) {
+static void handle_status(DictionaryIterator *in, bool from_car) {
   Tuple *id_t = dict_find(in, MESSAGE_KEY_STATUS_ID);
   if (!id_t) return;
   VehicleStatus s = {0};
@@ -124,10 +175,35 @@ static void handle_status(DictionaryIterator *in) {
   if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))      s.updated_at = (time_t)t->value->uint32;
   app_state_clear_error();
   app_state_apply_status(id_t->value->cstring, &s);
+
+  if (!s_launch_refresh_pending) return;
+  const Vehicle *v = app_state_current_vehicle();
+  if (!v || strcmp(v->id, id_t->value->cstring) != 0) return;
+  s_launch_refresh_pending = false;
+  // Unless this reading already came from the car. The proxy wakes a
+  // charging vehicle on an ordinary read of its own accord, and that is
+  // the launch most likely to matter, so a second wake would cost
+  // another half minute to learn nothing.
+  if (!from_car) ipc_request_status(v->id, true);
 }
 
 static void inbox_received(DictionaryIterator *in, void *ctx) {
-  app_state_set_busy(false);
+  Tuple *err_t = dict_find(in, MESSAGE_KEY_ERROR_MSG);
+  Tuple *kind_t = dict_find(in, MESSAGE_KEY_RESP_KIND);
+  const char *kind = kind_t ? kind_t->value->cstring : "";
+  Tuple *forced_t = dict_find(in, MESSAGE_KEY_FORCED);
+  bool from_car = forced_t && forced_t->value->uint8 != 0;
+
+  // The companion polls every 15s, so an ordinary status reply can land
+  // in the middle of a wake this watch is still waiting on. Leave the
+  // busy flag alone for those: taking the spinner down mid-wake is what
+  // makes a pull look like it did nothing.
+  bool interim_poll = !err_t && s_awaiting_forced && !from_car &&
+                      strcmp(kind, "status") == 0;
+  if (!interim_poll) {
+    clear_forced_wait();
+    app_state_set_busy(false);
+  }
 
   // Unit preference piggybacks on list + status messages; apply first
   // so a config flip is visible immediately, even alongside an error
@@ -135,17 +211,16 @@ static void inbox_received(DictionaryIterator *in, void *ctx) {
   Tuple *unit_t = dict_find(in, MESSAGE_KEY_UNIT_MILES);
   if (unit_t) app_state_set_unit_miles(unit_t->value->uint8 != 0);
 
-  Tuple *err_t = dict_find(in, MESSAGE_KEY_ERROR_MSG);
-  Tuple *kind_t = dict_find(in, MESSAGE_KEY_RESP_KIND);
-  const char *kind = kind_t ? kind_t->value->cstring : "";
   if (err_t) {
+    app_state_set_action_pending(false);
     app_state_set_error(err_t->value->cstring);
   } else if (strcmp(kind, "list") == 0) {
     handle_list(in);
   } else if (strcmp(kind, "status") == 0) {
-    handle_status(in);
+    handle_status(in, from_car);
   } else if (strcmp(kind, "action_ok") == 0) {
     app_state_clear_error();
+    app_state_set_action_pending(false);
     app_state_set_action_ok(true);
   } else if (strcmp(kind, "ready") == 0) {
     // Companion (re)connected. The first ready triggers the deferred
@@ -167,14 +242,18 @@ static void inbox_received(DictionaryIterator *in, void *ctx) {
 
 static void inbox_dropped(AppMessageResult reason, void *ctx) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "inbox dropped: %d", (int)reason);
+  clear_forced_wait();
   app_state_set_busy(false);
+  app_state_set_action_pending(false);
   app_state_set_error("Reply dropped");
 }
 
 static void outbox_failed(DictionaryIterator *it, AppMessageResult reason,
                           void *ctx) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "outbox failed: %d", (int)reason);
+  clear_forced_wait();
   app_state_set_busy(false);
+  app_state_set_action_pending(false);
   app_state_set_error("Phone unreachable");
 }
 
@@ -183,6 +262,8 @@ static void outbox_sent(DictionaryIterator *it, void *ctx) {
 }
 
 void ipc_init(void) {
+  s_launch_refresh_pending = true;
+  s_awaiting_forced = false;
   app_message_register_inbox_received(inbox_received);
   app_message_register_inbox_dropped(inbox_dropped);
   app_message_register_outbox_failed(outbox_failed);
@@ -191,5 +272,6 @@ void ipc_init(void) {
 }
 
 void ipc_deinit(void) {
+  clear_forced_wait();
   app_message_deregister_callbacks();
 }

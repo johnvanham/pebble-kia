@@ -97,8 +97,8 @@ static void canvas_update(Layer *layer, GContext *ctx) {
 
   int16_t content_top = top + LAYOUT_H_TITLE + LAYOUT_GAP;
   // How old these readings are belongs on this screen more than on the
-  // main one: the 12V percentage below is the reading the whole
-  // rate-limiting design exists to let the owner watch, and a stale one
+  // main one: the 12V percentage below is what shows whether all the
+  // car-waking reads are costing the battery anything, and a stale one
   // looks exactly like a live one. It gets a footer line of its own,
   // with the error state beside it rather than in place of it.
   int16_t foot_y = b.origin.y + b.size.h - LAYOUT_PAD_V - LAYOUT_H_STATUS;

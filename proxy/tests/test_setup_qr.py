@@ -183,7 +183,6 @@ def test_unwritable_directory_does_not_stop_startup(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMO_DATA_FILE", str(PROXY_DIR / "demo-data.json"))
     monkeypatch.setenv("PROXY_STATE_DB", str(tmp_path / "state.db"))
     monkeypatch.setenv("SETUP_QR_DIR", str(readonly / "setup"))
-    monkeypatch.setenv("DETECTOR_INTERVAL_SECONDS", "3600")
 
     from app.main import app
     with TestClient(app) as client:

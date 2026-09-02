@@ -22,29 +22,28 @@ class Settings(BaseSettings):
     bearer_token: str = Field(..., alias="PROXY_BEARER_TOKEN")
     data_source: Literal["demo", "live"] = Field("demo", alias="DATA_SOURCE")
     demo_data_file: Path = Field(Path("demo-data.json"), alias="DEMO_DATA_FILE")
+    # How long an ordinary read is served from the proxy's copy before
+    # Kia's servers are asked again. Ordinary reads never wake the car,
+    # so this only bounds API calls; a parked car's state on Kia's side
+    # rarely changes inside ten minutes anyway.
     live_refresh_min_seconds: int = Field(600, alias="LIVE_REFRESH_MIN_SECONDS")
     # Separate cache interval for the demo source — scenario-driven demos
-    # want short TTLs so polling reflects progression, while live wants
-    # long TTLs to protect the 12V battery.
+    # want short TTLs so polling reflects progression.
     demo_refresh_min_seconds: int = Field(5, alias="DEMO_REFRESH_MIN_SECONDS")
-    # Floor on car-waking refreshes. A forced refresh inside this window
-    # is downgraded to a cached read rather than rejected, so the watch
-    # never surfaces an error for pressing the button too eagerly.
-    live_force_min_seconds: int = Field(900, alias="LIVE_FORCE_MIN_SECONDS")
+    # While the last-known state says the car is charging, an ordinary
+    # read of an entry at least this old is upgraded to a wake, so a
+    # client that only polls sees the charge rate move. The 12V battery
+    # is being held up by the charger for the whole session, which is
+    # why this is the one time the proxy wakes the car unprompted.
+    live_charging_refresh_seconds: int = Field(60, alias="LIVE_CHARGING_REFRESH_SECONDS")
     # Remote commands. The proxy is read-only unless this is set — the
     # actions endpoint answers 403. Deliberately opt-in: commands are a
     # separate risk surface from reads, and a forked deployment should
     # have to choose them.
     enable_commands: bool = Field(False, alias="ENABLE_COMMANDS")
-    # Floor between remote commands per vehicle. Unlike the force
-    # floor there is no cached equivalent to downgrade to, so a command
-    # inside the window is refused with 429 rather than absorbed.
+    # Floor between remote commands per vehicle. A command inside the
+    # window is refused with 429 rather than queued.
     command_min_seconds: int = Field(10, alias="COMMAND_MIN_SECONDS")
-    # Transition detector. Runs as a background asyncio task and fires
-    # ntfy pushes on state changes. Unset means per-source defaults:
-    # DEMO_DETECTOR_SECONDS keeps scenario progression visible, while
-    # live wants to stay well inside Kia's tolerance.
-    detector_interval_seconds: int | None = Field(None, alias="DETECTOR_INTERVAL_SECONDS")
     # Kia account. Only read when DATA_SOURCE=live. Region and brand are
     # the integers hyundai_kia_connect_api expects:
     # REGIONS {1: EU, 2: CA, 3: US, 4: CN, 5: AU}, BRANDS {1: Kia, 2: Hyundai, 3: Genesis}.
@@ -57,11 +56,6 @@ class Settings(BaseSettings):
     # SQLite file holding the Kia refresh token and last-known vehicle
     # state, so a restart doesn't cost the watch a cold fetch.
     state_db: Path = Field(Path("state.db"), alias="PROXY_STATE_DB")
-    # ntfy notifier. Leave NTFY_URL empty to disable push (transitions
-    # are still logged so the detector itself is observable).
-    ntfy_url: str = Field("", alias="NTFY_URL")
-    ntfy_topic: str = Field("", alias="NTFY_TOPIC")
-    ntfy_auth_token: str = Field("", alias="NTFY_AUTH_TOKEN")
     # Directory the startup QR images are written to, so the owner can
     # scan the bearer token off a monitor instead of typing 64 hex
     # characters into a phone. Never served over HTTP — the files hold a
@@ -77,13 +71,6 @@ class Settings(BaseSettings):
     # QR rather than encoding a guess.
     proxy_public_url: str = Field("", alias="PROXY_PUBLIC_URL")
     log_level: str = Field("info", alias="LOG_LEVEL")
-
-    @field_validator("detector_interval_seconds", mode="before")
-    @classmethod
-    def _blank_means_default(cls, v):
-        # Both .env and docker-compose express "unset" as an empty string
-        # rather than an absent key, and an empty string is not an int.
-        return None if v == "" else v
 
     @field_validator("setup_qr_dir", mode="before")
     @classmethod
@@ -123,17 +110,6 @@ def configure_logging(settings: Settings) -> None:
 
     if level != wanted:
         log.warning("unrecognised LOG_LEVEL %r — using info", settings.log_level)
-
-
-DEMO_DETECTOR_SECONDS = 20
-LIVE_DETECTOR_SECONDS = 300
-
-
-def detector_interval(settings: Settings) -> int:
-    if settings.detector_interval_seconds is not None:
-        return settings.detector_interval_seconds
-    return (DEMO_DETECTOR_SECONDS if settings.data_source == "demo"
-            else LIVE_DETECTOR_SECONDS)
 
 
 def load_settings() -> Settings:

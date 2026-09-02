@@ -19,18 +19,20 @@ status, straight from the wrist.
 
 ## Long description
 
-Shows the state Kia Connect already knows about your car: battery
-percentage, range, charging status with rate and time-to-full, door
-locks, climate, outside temperature and odometer. Read-only by
-default; remote actions (lock/unlock, charging, climate, valet) are
-available only when the self-hosted proxy explicitly enables them.
-It talks to a small
-self-hosted proxy (FastAPI, source in the same repo) rather than to
-Kia directly, so you need a Kia Connect account and somewhere to run
-the proxy — a Raspberry Pi is plenty. Buttons work everywhere, and on
-Pebble Time 2 you can also pull down to refresh, swipe left for
-detail and swipe right to go back or quit. Runs on Pebble Time 2,
-Pebble Time, Pebble Time Round and Pebble 2.
+Your car's current state on the wrist: battery percentage, range,
+charging status with rate and time-to-full, door locks, climate,
+outside temperature and odometer. Opening the app and pulling down
+both ask the car itself rather than showing whatever Kia's servers
+last heard, and while the car is charging the numbers keep moving on
+their own. Read-only by default; remote actions (lock/unlock,
+charging, climate, valet) are available only when the self-hosted
+proxy explicitly enables them. It talks to a small self-hosted proxy
+(FastAPI, source in the same repo) rather than to Kia directly, so you
+need a Kia Connect account and somewhere to run the proxy — a
+Raspberry Pi is plenty. Buttons work everywhere, and on Pebble Time 2
+you can also pull down to refresh, swipe left for detail and swipe
+right to go back or quit. Runs on Pebble Time 2, Pebble Time, Pebble
+Time Round and Pebble 2.
 
 ## Asset checklist
 

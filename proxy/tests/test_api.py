@@ -17,9 +17,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMO_DATA_FILE", str(PROXY_DIR / "demo-data.json"))
     monkeypatch.setenv("PROXY_STATE_DB", str(tmp_path / "state.db"))
     monkeypatch.setenv("DEMO_REFRESH_MIN_SECONDS", "300")
-    monkeypatch.setenv("DETECTOR_INTERVAL_SECONDS", "3600")
-    monkeypatch.delenv("NTFY_URL", raising=False)
-    monkeypatch.delenv("NTFY_TOPIC", raising=False)
 
     from app.main import app
     with TestClient(app) as c:
@@ -111,8 +108,6 @@ def test_refresh_bypasses_the_cache(client):
     assert r.status_code == 200
     body = r.json()
     assert body["from_cache"] is False
-    # Demo has no vehicle to wake, so the force floor is 0 and the
-    # forced read always goes through.
     assert body["forced"] is True
 
 
@@ -144,18 +139,80 @@ def test_fresh_with_force_keeps_force_semantics(client):
     assert body["forced"] is True
 
 
-def test_fresh_with_force_still_downgrades_inside_the_floor(client):
+def test_a_second_refresh_wakes_again(client):
+    # No floor: every pull on the watch reaches the car.
+    client.post("/vehicles/pv5-demo/refresh", headers=auth())
+    r = client.post("/vehicles/pv5-demo/refresh", headers=auth())
+    body = r.json()
+    assert body["from_cache"] is False
+    assert body["forced"] is True
+
+
+def test_a_stale_poll_wakes_a_charging_car(clock, client):
     from app.main import app
 
-    # Demo runs with a zero force floor; raise it so the second force
-    # lands inside the window and must downgrade to the cache entry,
-    # fresh=1 notwithstanding.
-    app.state.cache.force_min_interval = 900
-    client.get("/vehicles/pv5-demo/status?force=1", headers=auth())
-    r = client.get("/vehicles/pv5-demo/status?force=1&fresh=1", headers=auth())
-    body = r.json()
+    # Demo runs with the upgrade off (it has nothing to wake), so turn
+    # it on to exercise the wiring. The EV9 in the demo data is
+    # mid-charge.
+    app.state.cache.charging_refresh = 60
+    first = client.get("/vehicles/ev9-demo/status", headers=auth()).json()
+    assert first["status"]["is_charging"] is True
+    assert first["forced"] is False
+
+    clock.advance(61)
+    body = client.get("/vehicles/ev9-demo/status", headers=auth()).json()
+    assert body["from_cache"] is False
+    assert body["forced"] is True
+
+
+def test_a_stale_poll_leaves_an_idle_car_alone(clock, client):
+    from app.main import app
+
+    app.state.cache.charging_refresh = 60
+    first = client.get("/vehicles/pv5-demo/status", headers=auth()).json()
+    assert first["status"]["is_charging"] is False
+
+    clock.advance(61)
+    body = client.get("/vehicles/pv5-demo/status", headers=auth()).json()
     assert body["from_cache"] is True
+
+
+def test_fresh_does_not_wake_a_charging_car(clock, client):
+    from app.main import app
+
+    app.state.cache.charging_refresh = 60
+    client.get("/vehicles/ev9-demo/status", headers=auth())
+
+    clock.advance(61)
+    body = client.get("/vehicles/ev9-demo/status?fresh=1", headers=auth()).json()
+    assert body["from_cache"] is False
     assert body["forced"] is False
+
+
+def test_the_demo_source_is_wired_without_the_charging_upgrade(client):
+    from app.main import app
+
+    # Nothing to wake on demo, and a scenario's short refresh window
+    # already keeps a charge moving.
+    assert app.state.cache.charging_refresh == 0
+
+
+def test_live_is_wired_with_the_charging_upgrade(tmp_path):
+    from app.config import Settings
+    from app.main import _build_cache
+    from app.store import StateStore
+
+    settings = Settings(  # type: ignore[call-arg]
+        PROXY_BEARER_TOKEN="x",
+        DATA_SOURCE="live",
+        LIVE_CHARGING_REFRESH_SECONDS=45,
+        LIVE_REFRESH_MIN_SECONDS=600,
+        _env_file=None,
+    )
+    cache = _build_cache(settings, StateStore(tmp_path / "wiring.db"))
+
+    assert cache.charging_refresh == 45
+    assert cache.min_interval == 600
 
 
 def test_unknown_vehicle_is_a_404(client):
@@ -174,12 +231,11 @@ def test_status_is_persisted_for_the_next_boot(client, tmp_path):
     assert status.odo_km == body["status"]["odo_km"]
 
 
-def test_detector_primes_the_cache_before_the_first_client(client):
-    # The detector's first tick runs at startup and goes through the
-    # same cache, so the watch's first request is already a hit rather
-    # than a second upstream call.
+def test_nothing_reads_upstream_before_the_first_client(client):
+    # No background poller: the first request of the process is the
+    # first upstream read.
     assert client.get("/vehicles/pv5-demo/status",
-                      headers=auth()).json()["from_cache"] is True
+                      headers=auth()).json()["from_cache"] is False
 
 
 KIA_ERRORS = [
@@ -209,7 +265,7 @@ def test_kia_errors_map_to_actionable_statuses(client, exc_name, expected):
 
     app.state.source.fetch_status = boom
     # A zero TTL means nothing is ever fresh, so the request cannot be
-    # served from whatever the detector last put in the cache.
+    # served from an entry warmed out of state.db.
     app.state.cache.min_interval = 0
 
     r = client.get("/vehicles/pv5-demo/status", headers=auth())
@@ -227,7 +283,7 @@ def test_unrecognised_kia_error_is_a_502(client):
 
     app.state.source.fetch_status = boom
     # A zero TTL means nothing is ever fresh, so the request cannot be
-    # served from whatever the detector last put in the cache.
+    # served from an entry warmed out of state.db.
     app.state.cache.min_interval = 0
 
     r = client.get("/vehicles/pv5-demo/status", headers=auth())

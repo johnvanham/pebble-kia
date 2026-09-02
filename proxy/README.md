@@ -28,19 +28,38 @@ All routes except `/health` require `Authorization: Bearer <token>`.
 | ------ | ----------------------------------- | ------------------------------------------- |
 | GET    | `/health`                           | Liveness + which data source is active      |
 | GET    | `/vehicles`                         | Account vehicles: id, VIN, nickname, model  |
-| GET    | `/vehicles/{id}/status[?force=1][?fresh=1]` | Cached status; see the flags below  |
+| GET    | `/vehicles/{id}/status[?force=1][?fresh=1]` | Status; see the flags below         |
 | POST   | `/vehicles/{id}/refresh`            | Same as `force=1` — wakes the vehicle       |
 | POST   | `/vehicles/{id}/actions/{action}`   | Remote command; off unless `ENABLE_COMMANDS=1` |
 
-Two flags, two very different costs. `force=1` (and `/refresh`) wakes
-the telematics unit for genuinely current data; it draws on the 12V
-battery, so `LIVE_FORCE_MIN_SECONDS` floors it and a force inside the
-window is downgraded to an ordinary read — served from cache when the
-entry is still fresh — with `forced: false`. `fresh=1` is
-an ordinary read that skips the `LIVE_REFRESH_MIN_SECONDS` cache window
-— it asks Kia's servers for the state they already hold and never wakes
-the car; the watch sends it once per launch. When both are sent, force
-semantics win.
+A plain `GET /status` serves the proxy's copy while it is younger than
+`LIVE_REFRESH_MIN_SECONDS`, otherwise it asks Kia's servers for the
+state they already hold. `fresh=1` skips that window for one such read
+and is the one read that never wakes the car whatever the vehicle is
+doing; the watch sends it once after a remote command to pick up the
+outcome. `force=1` (and `/refresh`) wakes the telematics unit for
+genuinely current data. There is no floor on it — every pull on the
+watch wakes the car — but there is coalescing: a request that arrives
+while a wake for the same vehicle is in progress waits for that wake
+and shares its answer, so two pulls cost one wake. A wake takes about
+30 s on a CCS2 car (the library triggers it, sleeps a fixed 25 s, then
+reads Kia's snapshot), and a plain GET that lands mid-wake waits with
+it, so give clients a generous timeout.
+
+While the last-known state says the car is charging, a plain read
+arriving `LIVE_CHARGING_REFRESH_SECONDS` after the last wake is
+upgraded to a wake without being asked, so a client that only polls
+sees the charge rate move; the first read showing charging has stopped
+puts the vehicle back on the ordinary window. Any polling client
+triggers this, not just the watch. When both flags are sent, force
+wins.
+
+`forced` in the response says the proxy asked Kia to wake the car. It
+does not prove the car answered: the library discards the wake
+trigger's response and sleeps a fixed interval, so a vehicle with no
+signal yields the previous snapshot with `forced: true` and no error.
+The status's own `updated_at` is the honest signal; the proxy logs a
+warning when a wake fails to advance it.
 
 Commands are a separate risk surface from reads, so the actions route
 is off unless `ENABLE_COMMANDS=1` — the bearer token otherwise grants
@@ -50,10 +69,13 @@ Ten actions are accepted: `lock`, `unlock`, `start_charge`,
 `close_charge_port`, `start_valet`, `stop_valet` (hazard lights are
 absent because `hyundai_kia_connect_api` raises not-implemented for
 the EU region). `COMMAND_MIN_SECONDS` floors the interval between
-commands; unlike a downgraded force, a command inside the window is
-refused with a 429, because silently dropping a lock request would be
-worse than an error. Commands are only ever watch-initiated — nothing
-in the proxy sends one on a timer.
+commands; a command inside the window is refused with a 429 rather
+than queued, because silently dropping a lock request would be worse
+than an error. The slot is claimed before the send rather than stamped
+after it, since a send can wait out a wake already in progress; a send
+Kia rejects hands the slot back so the retry is not locked out.
+Commands are only ever watch-initiated — nothing in the proxy sends
+one on a timer.
 
 ## Run locally
 
@@ -134,9 +156,9 @@ Schema of a scenario file:
 
 State at time T is the baseline with every patch whose `at_s ≤ T` applied
 in order; T loops every `loop_seconds` so the demo never ends. The
-optional `name` field is what the companion uses to label notifications.
-Scenario time starts from proxy boot (monotonic), so restarting the
-proxy replays from the top.
+optional `name` field labels the event for whoever reads the file;
+nothing consumes it. Scenario time starts from proxy boot (monotonic),
+so restarting the proxy replays from the top.
 
 `DEMO_REFRESH_MIN_SECONDS` (default 5) keeps the proxy cache short while
 running a scenario so the companion's polling loop sees progression
@@ -165,12 +187,21 @@ All settings are environment variables (see `.env.example`):
 - `PROXY_BEARER_TOKEN` — required; clients send this as `Authorization: Bearer …`.
 - `DATA_SOURCE` — `demo` (default) or `live`. `live` needs the `KIA_*` variables; see `.env.example`.
 - `DEMO_DATA_FILE` — path to the JSON file the demo source reads. Relative paths resolve against the working directory.
-- `LIVE_REFRESH_MIN_SECONDS` — min seconds between live pulls on the live source. Defaults to 600. Protects the 12V battery from aggressive polling.
-- `DEMO_REFRESH_MIN_SECONDS` — same knob, demo source. Defaults to 5 so scenario progression is visible to polling clients.
+- `LIVE_REFRESH_MIN_SECONDS` — how long a plain `GET /status` is served
+  from the proxy's copy before Kia's servers are asked again. Defaults
+  to 600. Ordinary reads never wake the car, so this only bounds API
+  calls.
+- `LIVE_CHARGING_REFRESH_SECONDS` — while the car is charging, a plain
+  read arriving this long after the last wake wakes the car again.
+  Defaults to 60; `0` disables the upgrade. Paced from the last wake,
+  not from the cached entry, so it works whatever
+  `LIVE_REFRESH_MIN_SECONDS` is set to.
+- `DEMO_REFRESH_MIN_SECONDS` — same knob as `LIVE_REFRESH_MIN_SECONDS`,
+  demo source. Defaults to 5 so scenario progression is visible to
+  polling clients. The demo has nothing to wake, so the charging
+  upgrade is off there.
 - `ENABLE_COMMANDS` — set to `1` to enable `POST /vehicles/{id}/actions/{action}`. Off by default; see "Endpoints" for why.
 - `COMMAND_MIN_SECONDS` — minimum seconds between remote commands (default 10); a command inside the window gets a 429.
-- `DETECTOR_INTERVAL_SECONDS` — how often the transition detector polls its source to diff for notifications. Unset means per-source defaults: 20 on demo, 300 on live.
-- `NTFY_URL` / `NTFY_TOPIC` / `NTFY_AUTH_TOKEN` — push-notification destination. Leave `NTFY_URL` empty to disable. See "Notifications" below.
 - `SETUP_QR_DIR` — directory the setup QR images are written to at startup. Defaults to `setup/` inside the `proxy/` directory, resolved from the package rather than the working directory so it does not move with however the app was launched. Empty disables them.
 - `SETUP_QR_LOG` — also print the token QR into the startup log. Off by default; see "Setup QR" for why.
 - `PROXY_PUBLIC_URL` — the base URL the phone should use. Only used to draw the URL QR; leave empty and that image is skipped.
@@ -214,24 +245,9 @@ in it has gone anywhere you do not control.
 
 ## Notifications
 
-An asyncio background task in the proxy (`app/detector.py`) polls each
-vehicle's status every `DETECTOR_INTERVAL_SECONDS`, diffs against the
-last observation, and fires an ntfy push on transitions worth
-surfacing: charge start/end, plug/unplug, lock/unlock, climate on/off.
-First observation for a given vehicle is silent so a process restart
-doesn't re-announce state that was already true.
-
-Pushes go to ntfy, which is bundled in `docker-compose.yml` so the
-whole stack is self-hosted. The phone installs the ntfy app,
-subscribes to your topic, and gets standard OS notifications — which
-the Pebble mobile app bridges to the watch automatically, so the
-watchapp does not need to be open.
-
-To enable push: set `NTFY_TOPIC` (any guess-hard string you like — the
-topic name is your only access control on the default ntfy config)
-and, if pointing at a non-compose ntfy, `NTFY_URL`. The compose stack
-defaults `NTFY_URL=http://ntfy:80` internally.
-
-Leaving `NTFY_TOPIC` empty disables push; the detector still runs and
-logs what it would have sent, which is useful for watching the
-scenario engine exercise state changes without noise on your phone.
+None. The proxy runs nothing in the background — no poller, no
+detector, no push. Charging and lock notifications on the phone and
+watch come from the official Kia app; the Pebble mobile app bridges
+them to the wrist like any other phone notification. An earlier
+version shipped an ntfy-based detector; it was removed because it only
+duplicated what the Kia app already sends.

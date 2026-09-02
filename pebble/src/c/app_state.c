@@ -28,6 +28,7 @@ static int s_current_index = 0;
 static AppPhase s_phase = APP_PHASE_LOADING_LIST;
 static bool s_busy = false;
 static bool s_action_ok = false;
+static bool s_action_pending = false;
 static bool s_unit_miles = PBK_USE_MILES_DEFAULT;  // companion's UNIT_MILES overrides
 static char s_error[APP_ERROR_LEN] = {0};
 // Latched for the whole run of failures so the buzz fires on the
@@ -95,6 +96,7 @@ void app_state_init(void) {
   s_phase = APP_PHASE_LOADING_LIST;
   s_busy = false;
   s_action_ok = false;
+  s_action_pending = false;
   s_error[0] = 0;
   s_error_buzzed = false;
   s_listener_count = 0;
@@ -275,6 +277,14 @@ bool app_state_action_ok(void) { return s_action_ok; }
 void app_state_set_action_ok(bool ok) {
   if (s_action_ok == ok) return;
   s_action_ok = ok;
+  app_state_notify();
+}
+
+bool app_state_action_pending(void) { return s_action_pending; }
+
+void app_state_set_action_pending(bool pending) {
+  if (s_action_pending == pending) return;
+  s_action_pending = pending;
   app_state_notify();
 }
 
