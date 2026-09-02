@@ -120,6 +120,14 @@ function statusMessage(vehicleId, data) {
     OUTSIDE_TEMP_C: s.outside_temp_c | 0,
     ODO_KM: s.odo_km | 0,
     IS_CLIMATE_ON: s.is_climate_on ? 1 : 0,
+    DEFROST_ON: s.defrost_on ? 1 : 0,
+    REAR_DEFROST_ON: s.rear_defrost_on ? 1 : 0,
+    WHEEL_HEAT_ON: s.wheel_heat_on ? 1 : 0,
+    BATT_COND: s.batt_conditioning ? 1 : 0,
+    V2L_LIMIT_PCT: s.v2l_limit_pct | 0,
+    V2L_KW_X10: Math.round(((s.v2l_kw || 0) * 10)) | 0,
+    TGT_RANGE_AC_KM: s.target_range_ac_km | 0,
+    TGT_RANGE_DC_KM: s.target_range_dc_km | 0,
     AUX_BATTERY_PCT: s.aux_battery_pct | 0,
     CHARGE_LIM_AC: s.charge_limit_ac | 0,
     CHARGE_LIM_DC: s.charge_limit_dc | 0,
@@ -197,11 +205,17 @@ function handleStatusRequest(vehicleId, force) {
   fetchStatus(vehicleId, { force: force });
 }
 
-function handleActionRequest(vehicleId, action) {
+function handleActionRequest(vehicleId, action, payload) {
   if (!vehicleId) return sendError('No vehicle selected');
   if (!action) return sendError('No action given');
   var path = '/vehicles/' + encodeURIComponent(vehicleId) +
              '/actions/' + encodeURIComponent(action);
+  // Only set_charge_limit carries values, and the proxy rejects both a
+  // missing one and a stray one, so pass them through exactly as the
+  // watch sent them rather than defaulting either.
+  if (payload.ACTION_AC != null && payload.ACTION_DC != null) {
+    path += '?ac=' + (payload.ACTION_AC | 0) + '&dc=' + (payload.ACTION_DC | 0);
+  }
   httpPost(path, function (err) {
     if (err) return sendError(err.message);
     Pebble.sendAppMessage({ RESP_KIND: 'action_ok', ACTION: action },
@@ -258,7 +272,7 @@ Pebble.addEventListener('appmessage', function (e) {
   if (kind === 'list') return handleListRequest();
   if (kind === 'status') return handleStatusRequest(id, false);
   if (kind === 'refresh') return handleStatusRequest(id, true);
-  if (kind === 'action') return handleActionRequest(id, p.ACTION);
+  if (kind === 'action') return handleActionRequest(id, p.ACTION, p);
   sendError('Bad request from watch');
 });
 

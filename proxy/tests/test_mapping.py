@@ -42,6 +42,15 @@ class StubVehicle:
     hood_is_open = None
     ev_battery_temperature_max = None
     ev_battery_temperature_max_unit = None
+    defrost_is_on = None
+    back_window_heater_is_on = None
+    steering_wheel_heater_is_on = None
+    ev_battery_heating_state = None
+    ev_v2l_discharge_limit = None
+    ev_target_range_charge_AC = None
+    ev_target_range_charge_AC_unit = None
+    ev_target_range_charge_DC = None
+    ev_target_range_charge_DC_unit = None
     data = None
 
     def __init__(self, **kwargs):
@@ -204,6 +213,86 @@ def test_plug_ac_when_plugged_but_not_drawing():
 
 def test_v2l_discharge_does_not_produce_negative_power():
     assert map_status(metric_charging(ev_charging_power=-1.2)).charge_kw == 0.0
+
+
+def test_v2l_discharge_is_reported_as_its_own_rate():
+    # The same reading charge_kw truncates to zero.
+    status = map_status(metric_charging(ev_charging_power=-1.2))
+
+    assert status.v2l_kw == 1.2
+
+
+def test_charging_is_not_mistaken_for_v2l():
+    assert map_status(metric_charging(ev_charging_power=7.4)).v2l_kw == 0.0
+
+
+def test_v2l_discharge_limit_passes_through():
+    status = map_status(metric_charging(ev_v2l_discharge_limit=20))
+
+    assert status.v2l_limit_pct == 20
+
+
+def test_heaters_report_individually():
+    status = map_status(metric_charging(
+        defrost_is_on=True,
+        back_window_heater_is_on=False,
+        steering_wheel_heater_is_on=True,
+    ))
+
+    assert (status.defrost_on, status.rear_defrost_on, status.wheel_heat_on) == (
+        True, False, True)
+
+
+def test_unreported_heaters_read_as_off():
+    status = map_status(metric_charging())
+
+    assert (status.defrost_on, status.rear_defrost_on, status.wheel_heat_on) == (
+        False, False, False)
+
+
+def test_battery_conditioning_from_the_runtime_flag():
+    status = map_status(metric_charging(data={
+        "Green": {"BatteryManagement": {"BatteryConditioning": 1}},
+    }))
+
+    assert status.batt_conditioning is True
+
+
+def test_battery_conditioning_flag_value_2_is_off():
+    # 0 and 2 both mean off across the CCS2 nodes; only 1 is on.
+    status = map_status(metric_charging(data={
+        "Green": {"BatteryManagement": {"BatteryConditioning": 2}},
+    }))
+
+    assert status.batt_conditioning is False
+
+
+def test_battery_cooling_counts_as_conditioning():
+    # The runtime flag is not the only thing that moves: a spinning
+    # chiller is the pack being conditioned whatever the flag says.
+    status = map_status(metric_charging(data={
+        "Green": {"BatteryManagement": {"BatteryConditioning": 0,
+                                        "ChillerRPM": 1800}},
+    }))
+
+    assert status.batt_conditioning is True
+
+
+def test_battery_heating_counts_as_conditioning():
+    status = map_status(metric_charging(ev_battery_heating_state=True))
+
+    assert status.batt_conditioning is True
+
+
+def test_target_ranges_normalise_to_km():
+    status = map_status(metric_charging(
+        ev_target_range_charge_AC=289,
+        ev_target_range_charge_AC_unit="mi",
+        ev_target_range_charge_DC=365,
+        ev_target_range_charge_DC_unit="mi",
+    ))
+
+    assert (status.target_range_ac_km, status.target_range_dc_km) == (465, 587)
 
 
 def test_open_body_parts_are_counted():

@@ -242,12 +242,37 @@ Commands were out of scope until the owner explicitly asked for them —
 exactly the trigger the original scope note anticipated. They are
 deliberately narrow and off by default.
 
-- `POST /vehicles/{id}/actions/{action}`, ten actions: `lock`,
+- `POST /vehicles/{id}/actions/{action}`, eleven actions: `lock`,
   `unlock`, `start_charge`, `stop_charge`, `start_climate`,
-  `stop_climate`, `open_charge_port`, `close_charge_port`,
-  `start_valet`, `stop_valet`. Hazard lights are deliberately absent:
-  `hyundai_kia_connect_api` raises not-implemented for them in the EU
-  region.
+  `start_defrost`, `stop_climate`, `open_charge_port`,
+  `close_charge_port`, `hazard_lights`, `set_charge_limit`.
+- `start_defrost` is the same climate preset as `start_climate` with
+  the de-icing surfaces lit: the CCS2 payload the library builds
+  already carries `windshieldFrontDefogState`, `strgWhlHeating` and
+  `sideRearMirrorHeating` (which `heating` in 1/2/4 selects, and which
+  drives the rear window with the mirrors), so this needed no new
+  endpoint — only more of `ClimateRequestOptions`.
+- `hazard_lights` has no matching "off": the car flashes for thirty
+  seconds and stops by itself. An earlier note here said hazards were
+  unavailable in the EU. That was true of `ApiImpl`'s base method and
+  is now stale — `KiaUvoApiEU` extends `ApiImplType1`, which posts to
+  the CCS2 `/ccs2/control/light` path.
+- `set_charge_limit` is the one action carrying parameters, `?ac=` and
+  `?dc=`, each a multiple of ten between 10 and 100. Both are
+  required: Kia writes the pair in one call, so sending one alone
+  would overwrite the other with whatever the caller omitted. Values
+  off that grid are refused rather than rounded — a silently corrected
+  85 would leave the watch showing a limit the car never got.
+- Valet mode was dropped in phase 9. It was never a PV5 feature: it is
+  an infotainment privacy lockdown on older head units, unrelated to
+  utility mode (which keeps the sockets and HVAC alive with the car in
+  Park, is set in the car, and has no API at all). Three things
+  independently said the command was dead weight — `supports_valet_mode`
+  is a hard-coded per-region constant on `ApiImplType1` rather than
+  anything the car reported, `valet_mode_active` is declared in the
+  library and never assigned anywhere, and the endpoint is the
+  pre-CCS2 `/control/valet` path while every control route the PV5
+  actually uses moved to `/ccs2/control/...`.
 - Off unless `ENABLE_COMMANDS=1`. The bearer token has only ever
   granted reads, so its blast radius was "someone can watch the car's
   state". A leaked token must not silently gain unlock; turning
@@ -265,8 +290,10 @@ deliberately narrow and off by default.
 - Watch-initiated only. No proxy code path — no timer, nothing — ever
   sends a command on its own; every command traces back to a press or
   tap on the wrist.
-- Risky actions (unlock, stop charge, valet) confirm on the watch
-  before the request is sent.
+- Risky actions (unlock, stop charge) confirm on the watch before the
+  request is sent. Charge limits do not: the picker's own "Set limits"
+  row is the confirming press, and a limit changes nothing a thief
+  could use.
 - A command can be slow to leave the proxy. `LiveDataSource`
   serialises every upstream call on one lock, and a wake holds it for
   its whole half minute, so a command tapped during one waits for it —
@@ -362,6 +389,8 @@ Watch → companion (requests):
 | `REQ_KIND`  | string | `list` \| `status` \| `refresh` \| `action`         |
 | `REQ_ID`    | string | Vehicle id (status/refresh/action)                  |
 | `ACTION`    | string | Action name (action requests; see "Remote commands") |
+| `ACTION_AC` | uint8  | `set_charge_limit` only — AC target, percent          |
+| `ACTION_DC` | uint8  | `set_charge_limit` only — DC target, percent          |
 
 Companion → watch (responses):
 
@@ -392,6 +421,14 @@ Companion → watch (responses):
 | `ODO_KM`        | uint32  |                                                      |
 | `AUX_BATTERY_PCT`| uint8  | 12V auxiliary battery, 0–100; 0 means not reported   |
 | `IS_CLIMATE_ON` | bool    | Maps to `air_control_is_on` upstream                 |
+| `DEFROST_ON`    | bool    | Front windscreen defog                               |
+| `REAR_DEFROST_ON`| bool   | Rear window heater                                   |
+| `WHEEL_HEAT_ON` | bool    | Steering-wheel heater                                |
+| `BATT_COND`     | bool    | Pack being heated or cooled right now                |
+| `V2L_LIMIT_PCT` | uint8   | SoC the car stops discharging to load at             |
+| `V2L_KW_X10`    | uint16  | Discharge rate × 10; the negative half of the reading `CHARGE_KW_X10` truncates |
+| `TGT_RANGE_AC_KM`| uint16 | Predicted range at the AC charge limit               |
+| `TGT_RANGE_DC_KM`| uint16 | Predicted range at the DC charge limit               |
 | `UPDATED_AT`    | uint32  | Unix epoch seconds; 0 means "never"                  |
 | `FORCED`        | bool    | The car was woken for this reading. Lets launch skip its own wake, and tells the watch a poll reply is not the wake it awaits |
 | `UNIT_MILES`    | bool    | Clay units toggle; rides every list/status response  |
@@ -403,6 +440,22 @@ online, and the watch kicks off the initial `list` request in response
 to any inbox message. This avoids the window where the watch would
 otherwise send before pypkjs (or the mobile app's JS runtime) has
 attached.
+
+Four of those readings have no library accessor on a CCS2 car and come
+straight off the raw payload or are derived in `live.py`:
+
+- Battery conditioning is the union of three nodes —
+  `Green.BatteryManagement.BatteryConditioning` (1 = on, the same 0/1/2
+  convention the defog nodes use), `HeatingState` and `ChillerRPM`. No
+  single one is trustworthy on its own, and together they catch both
+  heating and cooling whichever the car populates.
+- V2L discharge is `Green.Electric.SmartGrid.RealTimePower` when it
+  goes negative. `VehicleToLoad.Mode` reads 1 on a parked, idle PV5, so
+  its encoding is unknown and it is deliberately not mapped; the power
+  reading says what is actually happening.
+- Side-mirror heat has no node in the PV5's payload and is a `TODO` in
+  the library, so there is no field for it. It could only ever report
+  False.
 
 All distances stay in km end-to-end (Kia → proxy → companion → watch). Unit
 conversion is a display-only concern on the watch (see "Display units"
@@ -524,7 +577,23 @@ server); the list below reflects the path actually taken.
    official Kia app's notifications reach the watch by the same
    bridge. **Done.**
 
-All eight phases are complete.
+9. **Wider command surface; winter and V2L readings.** A survey of
+   what the CCS2 protocol and `hyundai_kia_connect_api` actually offer
+   the PV5, prompted by the owner asking what else the car can do.
+   Three new commands: `start_defrost` (the climate preset with the
+   de-icing surfaces on — the payload always carried them, we were
+   sending zeros), `hazard_lights`, and `set_charge_limit`, which is
+   the first action to take parameters and gets a picker screen on the
+   watch. Valet mode was removed; it was never a PV5 feature (see
+   "Remote commands"). The detail screen gained which heaters are
+   running, whether the pack is being conditioned, V2L discharge and
+   its floor, and the range predicted at each charge limit. Removing
+   two rows and adding four made the detail list long enough to scroll
+   a row clean off a round screen, which exposed a latent fault:
+   `layout_row` returns a zero-width chord out there and `draw_row`
+   then built a negative-width rect from it. **Done.**
+
+All nine phases are complete.
 
 ## Risks and open questions
 

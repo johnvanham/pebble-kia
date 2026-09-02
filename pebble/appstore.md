@@ -25,7 +25,8 @@ outside temperature and odometer. Opening the app and pulling down
 both ask the car itself rather than showing whatever Kia's servers
 last heard, and while the car is charging the numbers keep moving on
 their own. Read-only by default; remote actions (lock/unlock,
-charging, climate, valet) are available only when the self-hosted
+charging, climate, de-ice, charge limits, hazards) are available only
+when the self-hosted
 proxy explicitly enables them. It talks to a small self-hosted proxy
 (FastAPI, source in the same repo) rather than to Kia directly, so you
 need a Kia Connect account and somewhere to run the proxy — a

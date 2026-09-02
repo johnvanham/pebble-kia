@@ -77,7 +77,7 @@ def test_unknown_action_is_a_400_listing_valid_names(client):
     r = client.post("/vehicles/pv5-demo/actions/dance", headers=auth())
     assert r.status_code == 400
     assert "unlock" in r.json()["detail"]
-    assert "start_valet" in r.json()["detail"]
+    assert "hazard_lights" in r.json()["detail"]
 
 
 def test_unknown_vehicle_is_a_404(client):
@@ -122,15 +122,73 @@ def test_climate_actions_flip_the_demo_flag(client):
     assert body["status"]["is_climate_on"] is False
 
 
-def test_port_and_valet_actions_succeed_without_visible_change(client):
+def test_port_and_hazard_actions_succeed_without_visible_change(client):
     before = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()
-    for action in ("open_charge_port", "close_charge_port",
-                   "start_valet", "stop_valet"):
+    for action in ("open_charge_port", "close_charge_port", "hazard_lights"):
         r = client.post(f"/vehicles/pv5-demo/actions/{action}", headers=auth())
         assert r.status_code == 200
     after = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()
     assert after["status"]["doors_locked"] == before["status"]["doors_locked"]
     assert after["status"]["is_charging"] == before["status"]["is_charging"]
+
+
+def test_valet_actions_are_gone(client):
+    # Dropped in phase 9: the endpoint is pre-CCS2, the library never
+    # populates valet_mode_active, and supports_valet_mode is a
+    # hard-coded per-region constant rather than anything the PV5 said.
+    for action in ("start_valet", "stop_valet"):
+        r = client.post(f"/vehicles/pv5-demo/actions/{action}", headers=auth())
+        assert r.status_code == 400
+
+
+def test_defrost_lights_the_de_icing_surfaces(client):
+    client.post("/vehicles/pv5-demo/actions/start_defrost", headers=auth())
+    s = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()["status"]
+    assert s["is_climate_on"] is True
+    assert (s["defrost_on"], s["rear_defrost_on"], s["wheel_heat_on"]) == (
+        True, True, True)
+
+    client.post("/vehicles/pv5-demo/actions/stop_climate", headers=auth())
+    s = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()["status"]
+    assert s["is_climate_on"] is False
+    assert (s["defrost_on"], s["rear_defrost_on"], s["wheel_heat_on"]) == (
+        False, False, False)
+
+
+def test_plain_climate_leaves_the_heaters_alone(client):
+    client.post("/vehicles/pv5-demo/actions/start_climate", headers=auth())
+    s = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()["status"]
+    assert s["is_climate_on"] is True
+    assert s["defrost_on"] is False
+
+
+def test_set_charge_limit_writes_both_targets(client):
+    r = client.post("/vehicles/pv5-demo/actions/set_charge_limit?ac=70&dc=90",
+                    headers=auth())
+    assert r.status_code == 200
+    s = client.get("/vehicles/pv5-demo/status?fresh=1", headers=auth()).json()["status"]
+    assert (s["charge_limit_ac"], s["charge_limit_dc"]) == (70, 90)
+
+
+def test_set_charge_limit_needs_both_values(client):
+    r = client.post("/vehicles/pv5-demo/actions/set_charge_limit?ac=70",
+                    headers=auth())
+    assert r.status_code == 400
+    assert "dc" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("query", ["ac=85&dc=90", "ac=0&dc=90", "ac=70&dc=110"])
+def test_set_charge_limit_rejects_values_the_car_cannot_take(client, query):
+    r = client.post(f"/vehicles/pv5-demo/actions/set_charge_limit?{query}",
+                    headers=auth())
+    assert r.status_code == 400
+
+
+def test_parameters_on_an_action_that_takes_none_are_rejected(client):
+    # Silently ignoring them would let a watch that mis-sends a limit
+    # believe it landed.
+    r = client.post("/vehicles/pv5-demo/actions/lock?ac=80", headers=auth())
+    assert r.status_code == 400
 
 
 def test_throttle_refuses_a_rapid_second_command(client):

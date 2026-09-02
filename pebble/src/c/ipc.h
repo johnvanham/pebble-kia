@@ -10,6 +10,7 @@ void ipc_request_status(const char *id, bool force);
 // Asks the companion to run one remote command (lock, start_charge,
 // ...). The reply is RESP_KIND=action_ok or the usual error path.
 void ipc_request_action(const char *id, const char *action);
+void ipc_request_charge_limit(const char *id, uint8_t ac, uint8_t dc);
 // Fetches whichever vehicle is selected now, or, if the link is busy,
 // as soon as it frees up.
 void ipc_request_current_status(void);

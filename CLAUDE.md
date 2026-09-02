@@ -16,7 +16,7 @@ deliberate — don't re-litigate it without being asked.
 
 ## Current phase
 
-All eight phases done: the `live` source talks to the owner's real Kia
+All nine phases done: the `live` source talks to the owner's real Kia
 account via `hyundai_kia_connect_api`, with SQLite persistence for the
 refresh token and last-known state. `DATA_SOURCE=live` in `proxy/.env`
 switches it on; `demo` remains for offline iteration and still drives
@@ -28,7 +28,10 @@ owner's request — no force floor, wakes coalesce, charging sessions
 refresh on their own, launch wakes the car — and removed the ntfy
 notification pipeline because the official Kia app already covers it.
 DESIGN.md "Refresh model" and "Notifications" are the decision
-records; don't quietly reintroduce either.
+records; don't quietly reintroduce either. Phase 9 (2026-09-02) added
+`start_defrost`, `hazard_lights` and `set_charge_limit` (with a picker
+screen), dropped valet mode, and put heater state, battery
+conditioning, V2L and range-at-limit on the detail screen.
 
 The owner's watch is now a **Pebble Time 2 (`emery`)**, which has a
 larger display than the Pebble Time the UI was originally laid out for,
@@ -71,10 +74,17 @@ Guardrails:
 - Mutating endpoints exist now, at the owner's explicit request, behind
   `ENABLE_COMMANDS` (default off): `POST /vehicles/{id}/actions/{action}`.
   Never trigger a command from a timer or anything but an explicit
-  watch request. The action list must stay in sync across proxy,
-  companion and watch, and risky actions (unlock, stop charge, valet)
-  keep their confirm step on the watch. Threat model: DESIGN.md
-  "Remote commands".
+  watch request. Actions the library exposes that are still *not*
+  wired up, and why, if the question comes round again: battery
+  conditioning and utility mode have no API at all (both are read-only
+  or car-side), `set_windows_state` and `set_charging_current` are
+  plausible but untested on the PV5, and `set_navigation` /
+  `schedule_charging_and_climate` want a UI a watch does not have. The action list must stay in sync across proxy,
+  companion and watch, and risky actions (unlock, stop charge) keep
+  their confirm step on the watch. `set_charge_limit` is the only
+  action carrying parameters (`?ac=`&`?dc=`, multiples of ten,
+  10-100, both required because Kia writes the pair in one call).
+  Threat model: DESIGN.md "Remote commands".
 - The `demo` and `live` sources must expose exactly the same shape.
   When adding a field, extend `app/models.py`, update the demo JSON,
   and leave a clear TODO on the live side if it's not yet
@@ -302,11 +312,21 @@ it actually looks like. Known gotchas:
 - Real Kia vehicle ids are 36-char UUIDs. `VEHICLE_ID_LEN` must stay
   large enough for one; the demo source's short ids (`pv5-demo`) hid a
   truncation bug that only appeared against the live account.
-- Measured free heap after phase 8: emery 117 KB of 128 KB,
-  basalt/diorite/chalk ~52 KB of 64 KB. Plenty of room — the old
+- Measured free heap after phase 9: emery 114 KB of 128 KB,
+  basalt/diorite/chalk ~49 KB of 64 KB. Plenty of room — the old
   "24 KB" figure in these docs was aplite's, and aplite is not a
   target. Re-read the `pebble build` footer rather than trusting these
   numbers; they move with every screen.
+- On chalk, `layout_row` narrows every row to the circle's chord, and
+  a row scrolled far enough off the top returns a **zero-width** rect
+  (`half <= LAYOUT_PAD_H`). Anything that then subtracts a label width
+  from `row.size.w` produces a negative-width GRect, and drawing into
+  one faults the app — an `App fault!` in `pebble logs` with a bare PC
+  and no symbols. `ui_detail.c`'s `draw_row` bails out on a
+  non-positive width for exactly this reason. Any new scrolling list
+  needs the same guard; it only shows up once the list is long enough
+  to push a row right past the edge, so basalt and emery can look
+  perfectly healthy while chalk dies.
 
 ## Git and commits
 
@@ -353,12 +373,18 @@ readout, route it through `format_distance_km()` rather than hard-coding
 
 - Add a second user / multi-tenant anything — explicitly out of scope.
 - Grow the remote-command surface — new actions, new triggers, or any
-  path around `ENABLE_COMMANDS`. The ten watch-initiated actions are
+  path around `ENABLE_COMMANDS`. The eleven watch-initiated actions are
   the agreed scope; see the proxy guardrails and DESIGN.md "Remote
   commands".
 - Reintroduce a floor on forced reads, a background poller, or a
   notification pipeline. All three were removed deliberately in phase
   8; DESIGN.md "Refresh model" and "Notifications" say why.
+- Bring valet mode back. Removed in phase 9 and not for lack of
+  plumbing: it is an infotainment lockdown on older head units, not
+  utility mode, and the PV5 does not have it. `supports_valet_mode` is
+  a hard-coded constant on `ApiImplType1`, not a car capability;
+  `valet_mode_active` is declared in the library and assigned nowhere;
+  and the endpoint is the pre-CCS2 `/control/valet` path.
 - Replace the proxy with direct phone-to-Kia mode. The decision is in
   `DESIGN.md`; the proxy is reused by Home Assistant and a planned
   dashboard, so it earns its keep beyond the watchapp.

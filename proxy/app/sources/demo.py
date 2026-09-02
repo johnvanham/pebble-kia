@@ -124,7 +124,9 @@ class DemoDataSource:
             return status
         raise VehicleNotFound(vehicle_id)
 
-    def perform_action(self, vehicle_id: str, action: str) -> None:
+    def perform_action(
+        self, vehicle_id: str, action: str, params: dict[str, int] | None = None
+    ) -> None:
         if action not in ACTIONS:
             raise ValueError(f"unknown action: {action}")
         # Validates the vehicle id and gives the current plug state.
@@ -140,9 +142,21 @@ class DemoDataSource:
         elif action == "stop_charge":
             over["is_charging"] = False
             over["charge_kw"] = 0.0
-        elif action in ("start_climate", "stop_climate"):
-            over["is_climate_on"] = action == "start_climate"
-        # Charge-port and valet actions succeed with no visible change:
+        elif action in ("start_climate", "start_defrost", "stop_climate"):
+            on = action != "stop_climate"
+            over["is_climate_on"] = on
+            # Only the defrost preset lights the de-icing surfaces, but
+            # stopping climate puts all of them out.
+            heaters = on and action == "start_defrost"
+            over["defrost_on"] = heaters
+            over["rear_defrost_on"] = heaters
+            over["wheel_heat_on"] = heaters
+        elif action == "set_charge_limit":
+            if params is None:
+                raise ValueError("set_charge_limit needs ac and dc")
+            over["charge_limit_ac"] = params["ac"]
+            over["charge_limit_dc"] = params["dc"]
+        # Charge-port and hazard actions succeed with no visible change:
         # the status model carries no field for either.
 
     def has_scenario(self) -> bool:

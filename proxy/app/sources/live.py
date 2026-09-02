@@ -184,6 +184,18 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
             MILES_TO_KM if eff_unit == ECONOMY_UNIT_MILES else 1.0
         )
 
+    # Kia gives no single "conditioning" flag we can trust the encoding
+    # of, so take the union of the three nodes that each say the pack is
+    # being worked on: the runtime flag itself (1 = on, the same 0/1/2
+    # convention the defog nodes use), the heater, and the chiller.
+    # Together they cover both directions regardless of which one this
+    # car happens to populate.
+    conditioning = (
+        get_child_value(data, "Green.BatteryManagement.BatteryConditioning") == 1
+        or bool(vehicle.ev_battery_heating_state)
+        or bool(get_child_value(data, "Green.BatteryManagement.ChillerRPM"))
+    )
+
     return VehicleStatus(
         soc_pct=min(100, max(0, round(soc))),
         range_km=_to_km(
@@ -218,6 +230,23 @@ def map_status(vehicle: KiaVehicle) -> VehicleStatus:
         hood_open=bool(vehicle.hood_is_open),
         sunroof_open=sunroof_open,
         efficiency_kmpkwh=efficiency,
+        defrost_on=bool(vehicle.defrost_is_on),
+        rear_defrost_on=bool(vehicle.back_window_heater_is_on),
+        wheel_heat_on=bool(vehicle.steering_wheel_heater_is_on),
+        batt_conditioning=conditioning,
+        v2l_limit_pct=min(100, max(0, vehicle.ev_v2l_discharge_limit or 0)),
+        # The other half of the reading `power` above truncates away.
+        v2l_kw=max(0.0, -(vehicle.ev_charging_power or 0.0)),
+        target_range_ac_km=_to_km(
+            vehicle.ev_target_range_charge_AC,
+            vehicle.ev_target_range_charge_AC_unit,
+            "ev_target_range_charge_AC",
+        ),
+        target_range_dc_km=_to_km(
+            vehicle.ev_target_range_charge_DC,
+            vehicle.ev_target_range_charge_DC_unit,
+            "ev_target_range_charge_DC",
+        ),
         # None stays None: 0 C is a real reading, so a car that reports
         # no pack temperature must not be dressed up as a freezing one.
         batt_temp_c=None if vehicle.ev_battery_temperature_max is None
@@ -282,19 +311,38 @@ class LiveDataSource:
             self._persist_token(vm)
             return map_status(vm.vehicles[vehicle_id])
 
-    def perform_action(self, vehicle_id: str, action: str) -> None:
+    def perform_action(
+        self, vehicle_id: str, action: str, params: dict[str, int] | None = None
+    ) -> None:
         with self._lock:
             vm = self._manager()
             if vehicle_id not in vm.vehicles:
                 raise VehicleNotFound(vehicle_id)
-            if action == "start_climate":
+            if action in ("start_climate", "start_defrost"):
                 # Fixed preset: the watch has no UI for picking a
                 # temperature, and 21°C for 10 minutes is a sensible
-                # pre-departure warm-up/cool-down either way.
+                # pre-departure warm-up/cool-down either way. Defrost
+                # adds every de-icing surface the CCS2 payload carries —
+                # heating=1 is what the library turns into
+                # sideRearMirrorHeating, and it drives the rear window
+                # with the mirrors.
+                deice = action == "start_defrost"
                 vm.start_climate(
                     vehicle_id,
-                    ClimateRequestOptions(set_temp=21.0, duration=10),
+                    ClimateRequestOptions(
+                        set_temp=21.0,
+                        duration=10,
+                        defrost=deice,
+                        heating=1 if deice else 0,
+                        steering_wheel=1 if deice else 0,
+                    ),
                 )
+                self._persist_token(vm)
+                return
+            if action == "set_charge_limit":
+                if params is None:
+                    raise ValueError("set_charge_limit needs ac and dc")
+                vm.set_charge_limits(vehicle_id, params["ac"], params["dc"])
                 self._persist_token(vm)
                 return
             method = {
@@ -305,8 +353,9 @@ class LiveDataSource:
                 "stop_climate": vm.stop_climate,
                 "open_charge_port": vm.open_charge_port,
                 "close_charge_port": vm.close_charge_port,
-                "start_valet": vm.start_valet_mode,
-                "stop_valet": vm.stop_valet_mode,
+                # 30 seconds of flashing, then the car stops on its own —
+                # the library has no matching "off".
+                "hazard_lights": vm.start_hazard_lights,
             }.get(action)
             if method is None:
                 raise ValueError(f"unknown action: {action}")

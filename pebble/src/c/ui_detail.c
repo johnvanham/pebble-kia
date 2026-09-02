@@ -1,6 +1,7 @@
 #include "ui_detail.h"
 
 #include <pebble.h>
+#include <string.h>
 
 #include "app_state.h"
 #include "ipc.h"
@@ -12,7 +13,8 @@
 static Window *s_window;
 static Layer *s_canvas;
 
-// Ten rows (eleven while charging) no longer fit any of the screens, so
+// Fourteen rows (fifteen while charging) no longer fit any of the
+// screens, so
 // the row region scrolls between a pinned title and a pinned footer.
 // The offset is clamped against s_scroll_max, which canvas_update
 // recomputes from the real geometry every paint — the row count changes
@@ -22,6 +24,11 @@ static int16_t s_scroll_max;
 
 static void draw_row(GContext *ctx, GRect row, const char *label,
                      const char *value) {
+  // A row scrolled far off a round screen gets no chord to sit in, and
+  // the value rect below would then come out negative-width, which
+  // faults the app. Now that the list is long enough to scroll a row
+  // right past the edge, that is reachable on chalk.
+  if (row.size.w <= 0) return;
   GFont label_font = fonts_get_system_font(LAYOUT_FONT_ROW_LABEL);
   GFont value_font = fonts_get_system_font(LAYOUT_FONT_ROW_VALUE);
   // The value gets every pixel the label doesn't need: a fixed split
@@ -31,6 +38,7 @@ static void draw_row(GContext *ctx, GRect row, const char *label,
       label, label_font, row, GTextOverflowModeTrailingEllipsis,
       GTextAlignmentLeft);
   int16_t label_w = label_size.w + LAYOUT_GAP;
+  if (label_w > row.size.w) label_w = row.size.w;
   GRect label_rect = GRect(row.origin.x, row.origin.y, label_w, row.size.h);
   GRect value_rect = GRect(row.origin.x + label_w, row.origin.y,
                            row.size.w - label_w, row.size.h);
@@ -68,6 +76,24 @@ static void format_open(const Vehicle *v, char *buf, size_t sz) {
   if (!buf[0]) snprintf(buf, sz, "Closed");
 }
 
+static void format_heaters(const Vehicle *v, char *buf, size_t sz) {
+  const struct {
+    bool on;
+    const char *word;
+  } parts[] = {
+      {v->defrost_on, "front"},
+      {v->rear_defrost_on, "rear"},
+      {v->wheel_heat_on, "wheel"},
+  };
+  buf[0] = 0;
+  size_t n = 0;
+  for (size_t i = 0; i < ARRAY_LENGTH(parts) && n < sz; i++) {
+    if (!parts[i].on) continue;
+    n += snprintf(buf + n, sz - n, "%s%s", n ? ", " : "", parts[i].word);
+  }
+  if (!buf[0]) snprintf(buf, sz, "Off");
+}
+
 static void canvas_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   const Vehicle *v = app_state_current_vehicle();
@@ -103,7 +129,7 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   // with the error state beside it rather than in place of it.
   int16_t foot_y = b.origin.y + b.size.h - LAYOUT_PAD_V - LAYOUT_H_STATUS;
 
-  int rows = v->is_charging ? 11 : 10;
+  int rows = v->is_charging ? 15 : 14;
   int16_t content_h = rows * LAYOUT_H_ROW;
   int16_t viewport_h = foot_y - content_top;
   s_scroll_max = content_h > viewport_h ? content_h - viewport_h : 0;
@@ -122,6 +148,10 @@ static void canvas_update(Layer *layer, GContext *ctx) {
 
   draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Climate",
            v->is_climate_on ? "On" : "Off");
+  y += LAYOUT_H_ROW;
+
+  format_heaters(v, buf, sizeof(buf));
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Heaters", buf);
   y += LAYOUT_H_ROW;
 
   draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Doors",
@@ -165,6 +195,40 @@ static void canvas_update(Layer *layer, GContext *ctx) {
              v->charge_limit_dc);
   }
   draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Limit", buf);
+  y += LAYOUT_H_ROW;
+
+  // What the car expects to have in it once each limit is reached —
+  // the number that makes an 80% cap mean something.
+  if (v->target_range_ac_km == 0 && v->target_range_dc_km == 0) {
+    snprintf(buf, sizeof(buf), "--");
+  } else {
+    char ac[12];
+    char dc[12];
+    format_distance_km(v->target_range_ac_km, ac, sizeof(ac));
+    format_distance_km(v->target_range_dc_km, dc, sizeof(dc));
+    // Only the second reading needs its unit spelled out.
+    char *space = strchr(ac, ' ');
+    if (space) *space = 0;
+    snprintf(buf, sizeof(buf), "%s/%s", ac, dc);
+  }
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "At limit", buf);
+  y += LAYOUT_H_ROW;
+
+  // The rate while something is actually plugged into the socket,
+  // otherwise the floor it will discharge down to.
+  if (v->v2l_kw_x10 > 0) {
+    snprintf(buf, sizeof(buf), "%d.%d kW", v->v2l_kw_x10 / 10,
+             v->v2l_kw_x10 % 10);
+  } else if (v->v2l_limit_pct > 0) {
+    snprintf(buf, sizeof(buf), "to %d%%", v->v2l_limit_pct);
+  } else {
+    snprintf(buf, sizeof(buf), "--");
+  }
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "V2L", buf);
+  y += LAYOUT_H_ROW;
+
+  draw_row(ctx, layout_row(b, y, LAYOUT_H_ROW), "Cond",
+           v->batt_conditioning ? "On" : "Off");
   y += LAYOUT_H_ROW;
 
   format_open(v, buf, sizeof(buf));

@@ -5,26 +5,34 @@
 #include "app_state.h"
 #include "ipc.h"
 #include "layout.h"
+#include "ui_charge_limit.h"
 
 typedef struct {
   const char *label;
-  const char *action;  // wire name, identical watch -> companion -> proxy
+  // Wire name, identical watch -> companion -> proxy. NULL opens the
+  // charge-limit picker instead, which sends its own request once the
+  // values are chosen.
+  const char *action;
   bool confirm;
 } Action;
 
-// Commands that undo a protection (unlock, valet off) or interrupt a
-// charge get a confirming Select first; the rest fire immediately.
+// Commands that undo a protection (unlock) or interrupt a charge get a
+// confirming Select first; the rest fire immediately. De-ice is the
+// climate preset with the defrost, rear-window and steering-wheel
+// heaters on; hazards flash for thirty seconds and stop by themselves,
+// so there is no "off" to pair with it.
 static const Action s_actions[] = {
     {"Lock", "lock", false},
     {"Unlock", "unlock", true},
     {"Start charge", "start_charge", false},
     {"Stop charge", "stop_charge", true},
     {"Climate on", "start_climate", false},
+    {"De-ice", "start_defrost", false},
     {"Climate off", "stop_climate", false},
+    {"Charge limit", NULL, false},
     {"Open charge port", "open_charge_port", false},
     {"Close charge port", "close_charge_port", false},
-    {"Valet on", "start_valet", true},
-    {"Valet off", "stop_valet", true},
+    {"Hazards", "hazard_lights", false},
 };
 
 static Window *s_menu_window;
@@ -172,7 +180,9 @@ static void draw_menu_row(GContext *ctx, const Layer *cell, MenuIndex *idx,
 }
 
 static void menu_select(MenuLayer *menu, MenuIndex *idx, void *data) {
-  if (s_actions[idx->row].confirm) {
+  if (s_actions[idx->row].action == NULL) {
+    ui_charge_limit_push();
+  } else if (s_actions[idx->row].confirm) {
     s_pending = idx->row;
     confirm_push();
   } else {

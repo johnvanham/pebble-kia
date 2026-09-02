@@ -37,6 +37,13 @@ static void clear_forced_wait(void) {
   s_awaiting_forced = false;
 }
 
+// Charge limits are the only command that carries values. They travel
+// as their own keys rather than being packed into the action string so
+// the companion can hand them straight to the proxy's query string.
+static bool s_send_limits;
+static uint8_t s_limit_ac;
+static uint8_t s_limit_dc;
+
 static bool send_request(const char *kind, const char *id,
                          const char *action) {
   // Clear any previous error optimistically — if this send (or the reply)
@@ -54,6 +61,11 @@ static bool send_request(const char *kind, const char *id,
   dict_write_cstring(out, MESSAGE_KEY_REQ_KIND, kind);
   if (id != NULL) dict_write_cstring(out, MESSAGE_KEY_REQ_ID, id);
   if (action != NULL) dict_write_cstring(out, MESSAGE_KEY_ACTION, action);
+  if (s_send_limits) {
+    dict_write_uint8(out, MESSAGE_KEY_ACTION_AC, s_limit_ac);
+    dict_write_uint8(out, MESSAGE_KEY_ACTION_DC, s_limit_dc);
+    s_send_limits = false;
+  }
   r = app_message_outbox_send();
   if (r != APP_MSG_OK) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "outbox_send failed: %d", (int)r);
@@ -93,6 +105,17 @@ void ipc_request_action(const char *id, const char *action) {
   app_state_set_action_ok(false);
   app_state_set_action_pending(true);
   if (!send_request("action", id, action)) app_state_set_action_pending(false);
+}
+
+void ipc_request_charge_limit(const char *id, uint8_t ac, uint8_t dc) {
+  if (id == NULL || id[0] == 0) return;
+  s_send_limits = true;
+  s_limit_ac = ac;
+  s_limit_dc = dc;
+  ipc_request_action(id, "set_charge_limit");
+  // A send that never got as far as the outbox leaves the flag armed,
+  // which would attach these limits to whatever request went next.
+  s_send_limits = false;
 }
 
 // The outbox carries one message at a time, so a vehicle picked while a
@@ -172,6 +195,14 @@ static void handle_status(DictionaryIterator *in, bool from_car) {
   if ((t = dict_find(in, MESSAGE_KEY_SUNROOF_OPEN)))    s.sunroof_open = t->value->uint8 != 0;
   if ((t = dict_find(in, MESSAGE_KEY_EFF_KMPKWH_X10)))  s.eff_kmpkwh_x10 = t->value->uint32;
   if ((t = dict_find(in, MESSAGE_KEY_BATT_TEMP_C)))     s.batt_temp_c = t->value->int8;
+  if ((t = dict_find(in, MESSAGE_KEY_DEFROST_ON)))      s.defrost_on = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_REAR_DEFROST_ON))) s.rear_defrost_on = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_WHEEL_HEAT_ON)))   s.wheel_heat_on = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_BATT_COND)))       s.batt_conditioning = t->value->uint8 != 0;
+  if ((t = dict_find(in, MESSAGE_KEY_V2L_LIMIT_PCT)))   s.v2l_limit_pct = t->value->uint8;
+  if ((t = dict_find(in, MESSAGE_KEY_V2L_KW_X10)))      s.v2l_kw_x10 = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_TGT_RANGE_AC_KM))) s.target_range_ac_km = t->value->uint32;
+  if ((t = dict_find(in, MESSAGE_KEY_TGT_RANGE_DC_KM))) s.target_range_dc_km = t->value->uint32;
   if ((t = dict_find(in, MESSAGE_KEY_UPDATED_AT)))      s.updated_at = (time_t)t->value->uint32;
   app_state_clear_error();
   app_state_apply_status(id_t->value->cstring, &s);

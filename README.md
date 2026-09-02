@@ -134,7 +134,8 @@ wake's own half minute and the numbers change about every minute and a
 half. It stops as soon as a read shows the session over.
 
 **Decide whether to enable remote commands.** The watch has an actions
-menu (lock/unlock, charging, climate, charge port, valet), but the
+menu (lock/unlock, charging, climate, de-ice, charge port, charge
+limits, hazards), but the
 proxy ships with the endpoint behind it disabled. The bearer token
 otherwise grants only reads, so a leaked token means someone can watch
 the car's state — not unlock it. Enabling commands raises that blast
@@ -421,16 +422,24 @@ The only controls on basalt, diorite and chalk.
 - **Back** — return to the previous screen or exit the app.
 
 The detail screen scrolls: door/lock state with a count of anything
-open (doors, windows, trunk, hood, sunroof), outside temp, 12V
-battery, AC and DC charge limits, charge rate and ETA while charging,
+open (doors, windows, trunk, hood, sunroof), outside temp, which
+heaters are running, 12V battery, AC and DC charge limits and the
+range predicted at each, V2L (the discharge rate when something is
+plugged into the socket, otherwise the floor it stops at), whether the
+pack is being conditioned, charge rate and ETA while charging,
 efficiency, battery temperature and odometer.
 
 ### Actions menu
 
 The menu lists lock, unlock, charging start/stop, climate start/stop,
-charge port open/close and valet mode start/stop. Risky ones —
-unlock, stopping a charge, valet — ask for confirmation before
-anything is sent. "Sent" means the proxy accepted the command and
+de-ice, charge limits, charge port open/close and hazards. De-ice is
+the climate preset with the windscreen, rear-window and steering-wheel
+heaters on. Hazards flash for thirty seconds and stop by themselves.
+Charge limits open a small picker: Up/Down set the highlighted
+percentage, Select moves on to the next field and then sends, and
+because Kia writes the AC and DC targets together the picker always
+sends both. Risky ones — unlock, stopping a charge — ask for
+confirmation before anything is sent. "Sent" means the proxy accepted the command and
 handed it to Kia, not that the car has finished acting on it: the car
 takes a few seconds, and the app re-reads state on its own shortly
 after, so the display catches up without any extra taps. The menu

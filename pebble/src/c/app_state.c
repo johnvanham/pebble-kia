@@ -11,7 +11,7 @@
 // is 256 bytes per key and four Vehicles do not fit in one. Bump the
 // schema whenever the record's layout changes — reading a stale blob
 // into a changed struct is how the screen fills with garbage.
-#define PERSIST_SCHEMA_VERSION 3
+#define PERSIST_SCHEMA_VERSION 4
 #define PERSIST_KEY_SCHEMA 1
 #define PERSIST_KEY_COUNT 2
 #define PERSIST_KEY_UNIT_MILES 3
@@ -186,6 +186,14 @@ void app_state_apply_vehicle_list(const char (*ids)[VEHICLE_ID_LEN],
         s_vehicles[i].sunroof_open = prev[j].sunroof_open;
         s_vehicles[i].eff_kmpkwh_x10 = prev[j].eff_kmpkwh_x10;
         s_vehicles[i].batt_temp_c = prev[j].batt_temp_c;
+        s_vehicles[i].defrost_on = prev[j].defrost_on;
+        s_vehicles[i].rear_defrost_on = prev[j].rear_defrost_on;
+        s_vehicles[i].wheel_heat_on = prev[j].wheel_heat_on;
+        s_vehicles[i].batt_conditioning = prev[j].batt_conditioning;
+        s_vehicles[i].v2l_limit_pct = prev[j].v2l_limit_pct;
+        s_vehicles[i].v2l_kw_x10 = prev[j].v2l_kw_x10;
+        s_vehicles[i].target_range_ac_km = prev[j].target_range_ac_km;
+        s_vehicles[i].target_range_dc_km = prev[j].target_range_dc_km;
         s_vehicles[i].updated_at = prev[j].updated_at;
         break;
       }
@@ -226,6 +234,14 @@ void app_state_apply_status(const char *id, const VehicleStatus *status) {
       v->sunroof_open = status->sunroof_open;
       v->eff_kmpkwh_x10 = status->eff_kmpkwh_x10;
       v->batt_temp_c = status->batt_temp_c;
+      v->defrost_on = status->defrost_on;
+      v->rear_defrost_on = status->rear_defrost_on;
+      v->wheel_heat_on = status->wheel_heat_on;
+      v->batt_conditioning = status->batt_conditioning;
+      v->v2l_limit_pct = status->v2l_limit_pct;
+      v->v2l_kw_x10 = status->v2l_kw_x10;
+      v->target_range_ac_km = status->target_range_ac_km;
+      v->target_range_dc_km = status->target_range_dc_km;
       v->updated_at = status->updated_at;
       s_error_buzzed = false;
       // Only write when a reading the user can see has moved. The

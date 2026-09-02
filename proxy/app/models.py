@@ -46,6 +46,23 @@ class VehicleStatus(BaseModel):
     # fields, 0 is a reading a real battery can give, so absence needs
     # its own encoding all the way to the watch (which renders "--").
     batt_temp_c: int | None = None
+    # De-icing surfaces. There is no side-mirror heater here: the PV5's
+    # payload carries no node for it and the library leaves the mapping
+    # a TODO, so a field for it could only ever report False.
+    defrost_on: bool = False
+    rear_defrost_on: bool = False
+    wheel_heat_on: bool = False
+    # Whether the pack is being heated or cooled right now — the runtime
+    # state the Kia app shows, not the preconditioning setting.
+    batt_conditioning: bool = False
+    # V2L: the state of charge the car stops discharging at, and what it
+    # is currently feeding out. charge_kw only ever carries the positive
+    # half of the same reading.
+    v2l_limit_pct: int = Field(0, ge=0, le=100)
+    v2l_kw: float = Field(0.0, ge=0)
+    # Range the car predicts it will have at each charge limit.
+    target_range_ac_km: int = Field(0, ge=0)
+    target_range_dc_km: int = Field(0, ge=0)
     updated_at: datetime
 
 

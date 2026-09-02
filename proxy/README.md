@@ -64,11 +64,22 @@ warning when a wake fails to advance it.
 Commands are a separate risk surface from reads, so the actions route
 is off unless `ENABLE_COMMANDS=1` — the bearer token otherwise grants
 nothing but reads, and a leaked token must not silently gain unlock.
-Ten actions are accepted: `lock`, `unlock`, `start_charge`,
-`stop_charge`, `start_climate`, `stop_climate`, `open_charge_port`,
-`close_charge_port`, `start_valet`, `stop_valet` (hazard lights are
-absent because `hyundai_kia_connect_api` raises not-implemented for
-the EU region). `COMMAND_MIN_SECONDS` floors the interval between
+Eleven actions are accepted: `lock`, `unlock`, `start_charge`,
+`stop_charge`, `start_climate`, `start_defrost`, `stop_climate`,
+`open_charge_port`, `close_charge_port`, `hazard_lights` and
+`set_charge_limit`. `start_defrost` is the climate preset with the
+windscreen, rear-window and steering-wheel heaters on; `hazard_lights`
+flashes for thirty seconds and stops by itself, so it has no matching
+"off". `set_charge_limit` is the only one taking parameters:
+
+```
+POST /vehicles/{id}/actions/set_charge_limit?ac=80&dc=100
+```
+
+Both are required and each must be a multiple of ten between 10 and
+100 — Kia writes the pair in one call, so sending one alone would
+overwrite the other, and a value off that grid is refused rather than
+rounded into shape. `COMMAND_MIN_SECONDS` floors the interval between
 commands; a command inside the window is refused with a 429 rather
 than queued, because silently dropping a lock request would be worse
 than an error. The slot is claimed before the send rather than stamped

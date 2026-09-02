@@ -21,7 +21,7 @@ from .auth import verify_bearer
 from .cache import CommandThrottle, StatusCache
 from .config import Settings, configure_logging, load_settings
 from .models import ActionResponse, StatusResponse, VehicleList, VehicleStatus
-from .sources.base import ACTIONS, DataSource, VehicleNotFound
+from .sources.base import ACTION_PARAMS, ACTIONS, DataSource, VehicleNotFound
 from .sources.demo import DemoDataSource
 from .sources.live import LiveDataSource
 from .setup_qr import emit_setup_qr
@@ -133,7 +133,8 @@ def refresh_status(vehicle_id: str):
 @app.post("/vehicles/{vehicle_id}/actions/{action}",
           response_model=ActionResponse,
           dependencies=[Depends(verify_bearer)])
-def perform_action(vehicle_id: str, action: str):
+def perform_action(vehicle_id: str, action: str,
+                   ac: int | None = None, dc: int | None = None):
     settings: Settings = app.state.settings
     if not settings.enable_commands:
         raise HTTPException(
@@ -145,6 +146,7 @@ def perform_action(vehicle_id: str, action: str):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"unknown action: {action} (valid: {', '.join(ACTIONS)})",
         )
+    params = _action_params(action, {"ac": ac, "dc": dc})
     throttle: CommandThrottle = app.state.command_throttle
     # Reserved before the send, not stamped after it: perform_action can
     # sit behind a wake already in progress for tens of seconds, and a
@@ -157,7 +159,7 @@ def perform_action(vehicle_id: str, action: str):
             detail=f"too soon after the last command - retry in {math.ceil(wait)}s",
         )
     try:
-        app.state.source.perform_action(vehicle_id, action)
+        app.state.source.perform_action(vehicle_id, action, params)
     except VehicleNotFound:
         throttle.restore(vehicle_id, previous)
         raise HTTPException(
@@ -169,6 +171,37 @@ def perform_action(vehicle_id: str, action: str):
         throttle.restore(vehicle_id, previous)
         raise
     return ActionResponse(id=vehicle_id, action=action)
+
+
+# Charge targets are a percentage the car offers in tenths, so anything
+# else is a client bug rather than something to round into shape: a
+# silently corrected 85 would leave the watch showing a limit the car
+# never got.
+def _action_params(action: str, given: dict[str, int | None]) -> dict[str, int] | None:
+    expected = ACTION_PARAMS.get(action, ())
+    for name, value in given.items():
+        if value is not None and name not in expected:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{action} takes no {name} parameter",
+            )
+    if not expected:
+        return None
+    params: dict[str, int] = {}
+    for name in expected:
+        value = given.get(name)
+        if value is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{action} needs {' and '.join(expected)}",
+            )
+        if not 10 <= value <= 100 or value % 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{name} must be a multiple of 10 between 10 and 100",
+            )
+        params[name] = value
+    return params
 
 
 def _status(vehicle_id: str, force: bool, fresh: bool = False) -> StatusResponse:

@@ -17,12 +17,19 @@ ACTIONS = (
     "start_charge",
     "stop_charge",
     "start_climate",
+    "start_defrost",
     "stop_climate",
     "open_charge_port",
     "close_charge_port",
-    "start_valet",
-    "stop_valet",
+    "hazard_lights",
+    "set_charge_limit",
 )
+
+# Actions that carry parameters, and the names they take. Kia writes the
+# AC and DC charge targets as one pair, so both have to be supplied —
+# sending one alone would overwrite the other with whatever the caller
+# left out.
+ACTION_PARAMS: dict[str, tuple[str, ...]] = {"set_charge_limit": ("ac", "dc")}
 
 
 class DataSource(Protocol):
@@ -37,5 +44,8 @@ class DataSource(Protocol):
     ) -> VehicleStatus: ...
 
     # Raises VehicleNotFound for an unknown vehicle and ValueError for
-    # an action not in ACTIONS.
-    def perform_action(self, vehicle_id: str, action: str) -> None: ...
+    # an action not in ACTIONS. params carries the values for the
+    # actions in ACTION_PARAMS, already validated by the caller.
+    def perform_action(
+        self, vehicle_id: str, action: str, params: dict[str, int] | None = None
+    ) -> None: ...

@@ -45,6 +45,14 @@ typedef struct {
   bool sunroof_open;
   uint16_t eff_kmpkwh_x10;
   int8_t batt_temp_c;
+  bool defrost_on;
+  bool rear_defrost_on;
+  bool wheel_heat_on;
+  bool batt_conditioning;
+  uint8_t v2l_limit_pct;
+  uint16_t v2l_kw_x10;
+  uint16_t target_range_ac_km;
+  uint16_t target_range_dc_km;
   time_t updated_at;
 } Vehicle;
 
@@ -69,6 +77,14 @@ typedef struct {
   bool sunroof_open;
   uint16_t eff_kmpkwh_x10;
   int8_t batt_temp_c;
+  bool defrost_on;
+  bool rear_defrost_on;
+  bool wheel_heat_on;
+  bool batt_conditioning;
+  uint8_t v2l_limit_pct;
+  uint16_t v2l_kw_x10;
+  uint16_t target_range_ac_km;
+  uint16_t target_range_dc_km;
   time_t updated_at;
 } VehicleStatus;
 

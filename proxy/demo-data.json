@@ -26,6 +26,14 @@
         "sunroof_open": false,
         "efficiency_kmpkwh": 5.1,
         "batt_temp_c": 15,
+        "defrost_on": false,
+        "rear_defrost_on": false,
+        "wheel_heat_on": false,
+        "batt_conditioning": false,
+        "v2l_limit_pct": 20,
+        "v2l_kw": 0.0,
+        "target_range_ac_km": 316,
+        "target_range_dc_km": 395,
         "updated_at": "-2m"
       }
     },
@@ -55,6 +63,14 @@
         "sunroof_open": false,
         "efficiency_kmpkwh": 4.3,
         "batt_temp_c": 22,
+        "defrost_on": false,
+        "rear_defrost_on": false,
+        "wheel_heat_on": false,
+        "batt_conditioning": true,
+        "v2l_limit_pct": 30,
+        "v2l_kw": 0.0,
+        "target_range_ac_km": 314,
+        "target_range_dc_km": 353,
         "updated_at": "-17m"
       }
     }
